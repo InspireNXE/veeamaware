@@ -37,7 +37,7 @@ On a VBR server, `-WhatIf` on any `Invoke-*` script prints the payloads instead 
 | `src\Targets\` | Built-in targets: Discord, Teams, webhook |
 | `src\Update.ps1`, `install.ps1`, `Update-VeeamAware.ps1` | Releases and updates |
 | `tests\` | Offline test suite and mocks |
-| `tools\` | Read-only probes for new Veeam builds, and the badge generator |
+| `tools\` | Read-only probes for new Veeam builds, sample cards and README images (`New-SampleCards.ps1`, `New-ReadmeImages.ps1`), and the badge generator |
 
 ### Guidelines
 
@@ -50,7 +50,7 @@ On a VBR server, `-WhatIf` on any `Invoke-*` script prints the payloads instead 
 
 ## Releases
 
-1. Set `$script:VAVersion` in `src\VeeamAware.psm1`.
+1. Set `$script:VAVersion` in `src\VeeamAware.psm1` to the exact tag without the `v`, including any `-preview.N` suffix.
 2. Tag and push: `git tag v0.4.0 && git push origin v0.4.0`. A hyphenated tag (`v0.4.0-preview.1`) becomes a pre-release, which only the `preview` channel installs.
 3. The release workflow runs the tests, checks that the tag matches `$script:VAVersion`, and publishes the GitHub release with generated notes.
 

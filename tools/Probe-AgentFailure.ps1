@@ -9,7 +9,7 @@ sessions (reason, task log), the protection-group view of the job's computers (a
 and what VeeamAware currently builds from the session, so the gap between the two is visible.
 
 .EXAMPLE
-pwsh -File .\tools\Probe-AgentFailure.ps1 -JobName 'PC-ACCT-02 Backup'
+pwsh -File .\tools\Probe-AgentFailure.ps1 -JobName 'WS-EXAMPLE-01 Backup'
 #>
 param([Parameter(Mandatory)][string]$JobName, [int]$Days = 7)
 $ErrorActionPreference = 'Continue'

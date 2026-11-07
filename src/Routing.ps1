@@ -173,7 +173,7 @@ function Test-VARoutingConfig {
     return $errors
 }
 
-# ---- Migration from the 0.1 settings -------------------------------------------------------------------
+# ---- Migration from pre-release settings ----------------------------------------------------------------
 
 function Convert-VALegacyConfig {
     <#

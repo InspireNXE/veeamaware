@@ -3,3 +3,4 @@ secrets/
 state/
 logs/
 tools/probe*-output.txt
+samples/

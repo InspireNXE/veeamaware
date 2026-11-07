@@ -337,7 +337,7 @@ if ($changed -or $jsonAfter -ne $jsonBefore) {
     Write-VADone "Saved $configPath"
 }
 else { Write-VAHint 'Settings unchanged.' }
-$config = Get-VAConfig -Path $configPath
+$config = Get-VAConfig -Path $configPath -AllowNoTargets
 foreach ($m in @(Get-VAConfigMigrations)) { Write-VAHint "Config: $m" }
 
 # 2. Folders and permissions --------------------------------------------------------------------------------
@@ -392,7 +392,7 @@ if (-not $SkipTasks) {
     Enable-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' | Out-Null
     Write-VADone "Scheduled task \VeeamAware\VeeamAware Watch: every $minutes min (also sends the digests)."
 
-    # 0.1 had a separate digest task; the watcher runs digests now, so the old task would send them twice.
+    # Pre-release builds had a separate digest task; the watcher runs digests now, so the old task would send them twice.
     if (Get-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Digest' -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Digest' -Confirm:$false
         Write-VADone 'Removed the old "VeeamAware Digest" task (the watcher sends digests now).'

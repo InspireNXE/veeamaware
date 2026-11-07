@@ -55,13 +55,12 @@ function Read-VAState {
     foreach ($k in @($state.digests.Keys)) { $state.digests[$k] = ConvertTo-VAIsoString $state.digests[$k] }
     $state.lastWatchUtc = ConvertTo-VAIsoString $state.lastWatchUtc
     $state.health = ConvertTo-VAHealthState $state.health
-    # 0.1 kept one digest marker; it belongs to the "daily" digest that config migration creates.
+    # Pre-release builds kept one digest marker; it belongs to the "daily" digest that config migration creates.
     if ($state.Contains('lastDigestUtc')) {
         $v = ConvertTo-VAIsoString $state.lastDigestUtc
         if ($v -and -not $state.digests.Contains('daily')) { $state.digests['daily'] = $v }
         $state.Remove('lastDigestUtc')
     }
-    if ($state.Contains('openTickets')) { $state.Remove('openTickets') }
     return $state
 }
 

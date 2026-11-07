@@ -78,7 +78,8 @@ if ($Tag) {
     else { $zipUrl = "https://github.com/$Repository/archive/refs/heads/$Tag.zip"; $label = "branch $Tag" }
 }
 else {
-    $releases = @(Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases?per_page=30" -Headers $headers -UseBasicParsing)
+    # No @() here: Windows PowerShell 5.1 returns the JSON array as one object, and @() would nest it.
+    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases?per_page=30" -Headers $headers -UseBasicParsing
     $best = $null
     foreach ($r in $releases) {
         if ($r.draft -or -not (Get-SemVer $r.tag_name)) { continue }

@@ -69,7 +69,7 @@ It 'merges partial config over defaults' {
     Assert-Eq $c.notifications.maxObjects 5; Assert-Eq $c.notifications.objectDetail 'all'; Assert-Eq $c.vbr.port 443
     Assert-Eq @($c.routing.rules).Count 2; Assert-Eq "$(@($c.digests)[0].name)" 'daily'
 }
-It 'migrates 0.1 settings to routing rules and a daily digest' {
+It 'migrates pre-release settings to routing rules and a daily digest' {
     $p = Join-Path $tmp 'legacy.json'
     @'
 {"discord":{"webhookUrl":"https://discord.com/api/webhooks/1/a-b"},
@@ -243,17 +243,17 @@ It 'failure report: history fields, no repository bar' {
     Assert ($e[0].description -match 'Disk full') 'error quoted'
     Assert-Eq $e[0].thumbnail.url 'attachment://status-failed.png'
 }
-$agentFailLog = @(   # PC-ACCT-02 after the VBR 13.1 upgrade, as Veeam logged it
+$agentFailLog = @(   # WS-EXAMPLE-01 after the VBR 13.1 upgrade, as Veeam logged it
     [pscustomobject]@{ id = 1; status = 'Succeeded'; title = 'Job started at 11/6/2026 11:32:49 PM' }
-    [pscustomobject]@{ id = 2; status = 'Succeeded'; title = 'Backup agent PC-ACCT-02.corp.example requires upgrade' }
+    [pscustomobject]@{ id = 2; status = 'Succeeded'; title = 'Backup agent WS-EXAMPLE-01.corp.example requires upgrade' }
     [pscustomobject]@{ id = 3; status = 'Warning'; title = 'Server 192.0.2.20 has an outdated Data Mover service version.' }
-    [pscustomobject]@{ id = 4; status = 'Failed'; title = 'Processing PC-ACCT-02.corp.example Error: Failed to connect to agent at 192.0.2.20. Rescan the machine and try again.' }
+    [pscustomobject]@{ id = 4; status = 'Failed'; title = 'Processing WS-EXAMPLE-01.corp.example Error: Failed to connect to agent at 192.0.2.20. Rescan the machine and try again.' }
     [pscustomobject]@{ id = 5; status = 'Failed'; title = 'Job finished with error at 11/6/2026 11:33:37 PM' }
 )
-$agentFailTask = [pscustomobject]@{ id = 't1'; name = 'PC-ACCT-02.corp.example'; state = 'Stopped'; objectId = 'a1b2c3d4'
+$agentFailTask = [pscustomobject]@{ id = 't1'; name = 'WS-EXAMPLE-01.corp.example'; state = 'Stopped'; objectId = 'a1b2c3d4'
     result = [pscustomobject]@{ result = 'Failed'; message = 'Task failed. Error: Failed to connect to agent at 192.0.2.20. Rescan the machine and try again.' } }
 It 'agent failure: the log line that explains it is quoted before the symptom' {
-    $f = Get-VASessionSummary -Session (New-MockSession -Name 'PC-ACCT-02' -Type 'AgentBackup' -Result 'Failed') -TaskSessions @($agentFailTask) -Log $agentFailLog
+    $f = Get-VASessionSummary -Session (New-MockSession -Name 'WS-EXAMPLE-01' -Type 'AgentBackup' -Result 'Failed') -TaskSessions @($agentFailTask) -Log $agentFailLog
     Assert-Eq $f.Hints.Count 2
     Assert-Eq $f.Tasks[0].ObjectId 'a1b2c3d4'
     $d = (New-VASessionEmbeds -Config $config -Summary $f)[0].description
@@ -261,7 +261,7 @@ It 'agent failure: the log line that explains it is quoted before the symptom' {
     Assert ($cause -ge 0 -and $symptom -gt $cause) $d
 }
 It 'agent failure: the protection group status says what to do' {
-    $f = Get-VASessionSummary -Session (New-MockSession -Name 'PC-ACCT-02' -Type 'AgentBackup' -Result 'Failed') -TaskSessions @($agentFailTask) -Log $agentFailLog
+    $f = Get-VASessionSummary -Session (New-MockSession -Name 'WS-EXAMPLE-01' -Type 'AgentBackup' -Result 'Failed') -TaskSessions @($agentFailTask) -Log $agentFailLog
     $f.Agents = @([pscustomobject]@{ objectId = 'a1b2c3d4'; name = '192.0.2.20'; protectionGroup = 'Manually Added'; state = 'Online'
             agentStatus = 'UpgradeAvailable'; agentVersion = '13.1.1.700'; rebootRequired = $false })
     # Laid out like every other card: issue on the status line, version as a fact, fix as the note.
@@ -269,7 +269,7 @@ It 'agent failure: the protection group status says what to do' {
     $d = $e.description
     Assert ($d -notmatch 'out of date') 'the status line keeps its usual parts'
     Assert ($d -match '\n-# Upgrade the agent from the console: Inventory → Physical Infrastructure → Manually Added, right-click the computer → Upgrade\.$') $d
-    Assert ($d -match '> \*\*PC-ACCT-02.corp.example\*\*\n> Task failed') 'the error stays the quote'
+    Assert ($d -match '> \*\*WS-EXAMPLE-01.corp.example\*\*\n> Task failed') 'the error stays the quote'
     Assert ($d -notmatch 'requires upgrade') 'log hints are left out when the agent status already explains it'
     Assert-Eq (($e.fields | Where-Object name -eq 'Agent').value) '13.1.1.700 · out of date'
     $two = @($f.Agents[0], ([pscustomobject]@{ name = 'b'; agentStatus = 'UpgradeAvailable'; agentVersion = '13.1.1.700' }))
@@ -281,12 +281,12 @@ It 'agent failure: the protection group status says what to do' {
 }
 It 'object rows fit beside the status badge' {
     $rows = @(
-        [ordered]@{ status = 'Failed'; name = 'PC-ACCT-02.corp.example'; size = '0 B'; duration = '' }
+        [ordered]@{ status = 'Failed'; name = 'WS-EXAMPLE-01.corp.example'; size = '0 B'; duration = '' }
         [ordered]@{ status = 'Success'; name = 'a-much-longer-server-name.example.internal'; size = '12.4 GB'; duration = '1h 02m' }
     )
     foreach ($l in (Format-VAObjectTable -Rows $rows -Ansi $false)) { Assert ($l.Length -le 38) "too wide ($($l.Length)): $l" }
     $one = @(Format-VAObjectTable -Rows @($rows[0]) -Ansi $false)
-    Assert-Eq $one[0] '✖ PC-ACCT-02.corp.example  0 B'
+    Assert-Eq $one[0] '✖ WS-EXAMPLE-01.corp.example  0 B'
 }
 It 'compares with the usual run and reports recovery' {
     $now = [datetimeoffset]::UtcNow
@@ -521,13 +521,13 @@ It 'one failing target does not block the others' {
     }
     Assert-Eq (Send-VAEvent -Config $tc -Event $failEvt) 1
 }
-It 'state migrates the 0.1 digest marker and drops ticket data' {
+It 'state migrates the pre-release digest marker' {
     $p = Join-Path $tmp 'legacy-state.json'
-    '{"version":1,"lastDigestUtc":"2026-11-05T15:00:00Z","openTickets":{"a|b":{}},"notifiedSessions":["x"]}' | Set-Content $p
+    '{"version":1,"lastDigestUtc":"2026-11-05T15:00:00Z","notifiedSessions":["x"]}' | Set-Content $p
     Set-VAStatePath $p
     $s = Read-VAState
     Assert-Eq $s.digests['daily'] '2026-11-05T15:00:00Z'
-    Assert (-not $s.Contains('openTickets')) 'ticket data kept'; Assert (-not $s.Contains('lastDigestUtc')) 'old marker kept'
+    Assert (-not $s.Contains('lastDigestUtc')) 'old marker kept'
     Set-VAStatePath (Join-Path $tmp 'targets-state.json')
 }
 

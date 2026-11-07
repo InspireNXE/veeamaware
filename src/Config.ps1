@@ -77,7 +77,7 @@ function Get-VADefaultConfig {
                 exclude               = @()
             }
             # Server health (src\Health.ps1). Quiet while Veeam is upgrading or maintenance mode is on.
-            # Alert timing, like Prober's probes; each check can override any of the three.
+            # Alert timing (see src\Health.ps1); each check can override any of the three.
             health               = [ordered]@{
                 enabled                = $true
                 firstAlertAfterMinutes = 15      # a service must be down this long before the first alert
@@ -144,17 +144,18 @@ function Merge-VAConfig {
 }
 
 function Get-VAConfig {
-    param([string]$Path = (Join-Path $script:VARoot 'config\config.json'))
+    # -AllowNoTargets: the installer loads the config before any target is set up ("set up later").
+    param([string]$Path = (Join-Path $script:VARoot 'config\config.json'), [switch]$AllowNoTargets)
     $config = Get-VADefaultConfig
     if (Test-Path $Path) {
         $json = Get-Content -Raw -Path $Path | ConvertFrom-Json
-        $script:VAConfigMigrations = Convert-VALegacyConfig $json   # 0.1 settings -> routing/digests (in memory)
+        $script:VAConfigMigrations = Convert-VALegacyConfig $json   # pre-release settings -> routing/digests (in memory)
         $config = Merge-VAConfig $config $json
     }
     elseif ($Path) {
         throw "Config file not found: $Path. Run Install-VeeamAware.ps1 or copy config\config.example.json."
     }
-    $errors = Test-VAConfig $config
+    $errors = @(Test-VAConfig $config | Where-Object { -not ($AllowNoTargets -and $_ -like 'No notification target configured*') })
     if ($errors) { throw ("Invalid configuration:`n - " + ($errors -join "`n - ")) }
     $script:VAActiveConfig = $config   # display settings (badges, ANSI) for embed builders that take no -Config
     return $config

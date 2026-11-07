@@ -10,7 +10,7 @@ Periodic watcher (the "VeeamAware Watch" scheduled task, every watch.intervalMin
   * repositories crossing the free-space warning/critical thresholds, going offline, or recovering
   * Security & Compliance Analyzer violations after each analyzer run (and "all clear" when they are gone)
   * pending four-eyes authorization requests
-  * server health: Veeam services stopped longer than a grace period, sessions that appear stuck, and the
+  * server health: Veeam services stopped longer than firstAlertAfterMinutes, sessions that appear stuck, and the
     watcher itself failing several runs in a row (quiet while Veeam upgrades or maintenance mode is on)
 
 and then starts any digest whose schedule is due (Invoke-VeeamAwareDigest.ps1 -Scheduled).

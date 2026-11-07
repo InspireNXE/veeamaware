@@ -924,9 +924,9 @@ function New-VADigestReport {
         $lines = @(
             if ($AnalyzerViolations -ge 0) {
                 if ($prev -ge 0 -and $AnalyzerViolations -gt $prev) { "⚠️ $(& $plural ($AnalyzerViolations - $prev) 'new analyzer finding' 'new analyzer findings') ($AnalyzerViolations open)" }
-                elseif ($prev -ge 0 -and $AnalyzerViolations -lt $prev) { "🛡️ $AnalyzerViolations analyzer findings open, $($prev - $AnalyzerViolations) fixed" }
-                elseif ($prev -ge 0) { "🛡️ $AnalyzerViolations analyzer findings open, no change" }
-                else { "🛡️ $AnalyzerViolations analyzer findings open" }
+                elseif ($prev -ge 0 -and $AnalyzerViolations -lt $prev) { "🛡️ $(& $plural $AnalyzerViolations 'analyzer finding' 'analyzer findings') open, $($prev - $AnalyzerViolations) fixed" }
+                elseif ($prev -ge 0) { "🛡️ $(& $plural $AnalyzerViolations 'analyzer finding' 'analyzer findings') open, no change" }
+                else { "🛡️ $(& $plural $AnalyzerViolations 'analyzer finding' 'analyzer findings') open" }
             }
             if ($MalwareEvents.Count) { "🦠 $(& $plural $MalwareEvents.Count 'malware event' 'malware events')" } else { '🦠 no malware events' }
         )

@@ -1,7 +1,7 @@
 # Server health, checked by the watcher on every pass:
 #
 #   services   Veeam services (and the configuration database) that should be running but have been stopped
-#              for longer than graceMinutes. The grace period hides reboots and service restarts.
+#              for longer than firstAlertAfterMinutes. The wait hides reboots and service restarts.
 #   sessions   job sessions that appear stuck: running far longer than the job usually takes, or with no
 #              progress for a long time.
 #   watcher    the watcher itself failing several runs in a row (VBR unreachable, bad credentials...).
@@ -261,7 +261,7 @@ function Update-VAQuietState {
 
 # ---- Alert timing -------------------------------------------------------------------------------------------
 #
-# The same three timings as Prober's probes:
+# Three timings, shared by every health check:
 #   firstAlertAfterMinutes  a problem must last this long before the first alert (services; stuck sessions and
 #                           the watcher have their own thresholds)
 #   repeatEveryMinutes      while it lasts, a reminder this often (0 = alert once)
