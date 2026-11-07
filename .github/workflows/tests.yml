@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Offline test suite
+        shell: pwsh
+        run: pwsh -NoProfile -File ./tests/Run-Tests.ps1
+      - name: Bootstrap parses in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $e = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$pwd\install.ps1", [ref]$null, [ref]$e)
+          if ($e) { $e | ForEach-Object { Write-Error $_.Message }; exit 1 }

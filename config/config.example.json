@@ -1,0 +1,134 @@
+{
+  "_comment": "Install-VeeamAware.ps1 copies this to config.json. Any key you leave out uses the built-in default; see README 'Configuration'.",
+  "discord": {
+    "webhookUrl": "https://discord.com/api/webhooks/000000000000000000/replace-me",
+    "threadId": "",
+    "username": "VeeamAware",
+    "avatarUrl": "",
+    "statusBadges": true,
+    "ansiColors": true,
+    "mentions": {
+      "onFailure": [],
+      "onWarning": [],
+      "onSuccess": [],
+      "onSecurity": []
+    }
+  },
+  "targets": [
+    {
+      "_comment": "A second Discord channel (any number allowed, each with a unique name). Takes the same settings as the discord block above. Set enabled to true to use it.",
+      "type": "discord",
+      "name": "oncall",
+      "enabled": false,
+      "webhookUrl": "https://discord.com/api/webhooks/000000000000000000/replace-me",
+      "minSeverity": "critical",
+      "username": "Backup alerts",
+      "mentions": { "onFailure": [] }
+    },
+    {
+      "_comment": "Generic JSON webhook (n8n, Home Assistant, your own API). Body = veeamaware.event/v1. Set enabled to true to use it.",
+      "type": "webhook",
+      "name": "automation",
+      "enabled": false,
+      "url": "https://n8n.example.com/webhook/veeam",
+      "minSeverity": "warning",
+      "kinds": ["*"],
+      "includeResolved": true,
+      "includeDeferred": false,
+      "headers": {},
+      "tokenFile": "",
+      "signingSecretFile": ""
+    },
+    {
+      "_comment": "Microsoft Teams channel. In Teams: channel ... > Workflows > 'Post to a channel when a webhook request is received', then paste the URL here.",
+      "type": "teams",
+      "name": "teams",
+      "enabled": false,
+      "url": "https://replace-me.webhook.office.com/",
+      "minSeverity": "warning",
+      "includeResolved": true
+    }
+  ],
+  "routing": {
+    "_comment": "First matching rule wins. Per result: immediate | digest | both | off. Unmatched jobs report immediately.",
+    "rules": [
+      {
+        "name": "Veeam Agents: failures now, the rest in the digest",
+        "match": { "jobTypes": ["AgentBackup", "AgentPolicy"] },
+        "success": "digest",
+        "warning": "digest",
+        "failure": "immediate"
+      },
+      {
+        "name": "Everything else: report every run",
+        "match": { "jobs": ["*"] },
+        "success": "immediate",
+        "warning": "immediate",
+        "failure": "immediate"
+      }
+    ]
+  },
+  "digests": [
+    {
+      "name": "daily",
+      "enabled": true,
+      "schedule": { "every": "day", "at": "08:00" },
+      "targets": ["*"],
+      "jobs": { "include": ["*"], "exclude": [], "jobTypes": [] },
+      "content": "all",
+      "sections": ["agents", "jobs", "repositories", "security"],
+      "skipWhenEmpty": false
+    }
+  ],
+  "vbr": {
+    "_comment": "dataSource: auto | rest | powershell. Community Edition uses powershell (its REST API serves no data).",
+    "dataSource": "auto",
+    "powershellProfile": "",
+    "server": "localhost",
+    "port": 443,
+    "apiVersions": ["1.3-rev2", "1.3-rev1", "1.3-rev0"],
+    "skipCertificateCheck": true,
+    "credentialFile": "secrets\\vbr-credential.json",
+    "timeoutSeconds": 60
+  },
+  "notifications": {
+    "objectDetail": "all",
+    "maxObjects": 15,
+    "maxLogLines": 6,
+    "sessionWaitMinutes": 45
+  },
+  "watch": {
+    "enabled": true,
+    "intervalMinutes": 5,
+    "missedSessions": true,
+    "malware": true,
+    "securityAnalyzer": true,
+    "authorizationRequests": true,
+    "repositories": {
+      "enabled": true,
+      "warnPercentFree": 15,
+      "criticalPercentFree": 5,
+      "notifyRecovery": true,
+      "exclude": []
+    },
+    "health": {
+      "_comment": "Veeam services down, stuck sessions, watcher failures. Quiet during Veeam upgrades and Set-VeeamAwareMaintenance.ps1. See README > Server health for every key.",
+      "enabled": true,
+      "firstAlertAfterMinutes": 15,
+      "repeatEveryMinutes": 60,
+      "backUpForMinutes": 5,
+      "services": { "exclude": [] },
+      "sessions": { "usualFactor": 3, "minHours": 2, "hours": 12, "noProgressMinutes": 240, "excludeJobs": [], "jobs": [] },
+      "watcher": { "failureAlertAfter": 3 }
+    }
+  },
+  "logging": {
+    "level": "Info",
+    "retentionDays": 14
+  },
+  "update": {
+    "_comment": "channel: stable | preview. Update-VeeamAware.ps1 installs the newest release on this channel; the digest mentions it when notify is true.",
+    "channel": "stable",
+    "notify": true
+  }
+}
