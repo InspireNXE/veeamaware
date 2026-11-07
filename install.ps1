@@ -10,7 +10,7 @@ One line, from an elevated PowerShell (Windows PowerShell 5.1 or PowerShell 7) o
 With options (preview channel, another folder, a specific version):
 
     & ([scriptblock]::Create((irm https://raw.githubusercontent.com/inspirenxe/veeamaware/main/install.ps1))) -Channel preview
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/inspirenxe/veeamaware/main/install.ps1))) -Tag v0.3.0
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/inspirenxe/veeamaware/main/install.ps1))) -Tag v0.1.0
 
 It picks the newest release on the channel (stable: full releases; preview: pre-releases too), copies it
 into -Path and runs Install-VeeamAware.ps1 under PowerShell 7. config\config.json, secrets\, state\, logs\
@@ -22,7 +22,7 @@ Runs on Windows PowerShell 5.1 as well, so keep the syntax 5.1-compatible.
 param(
     [string]$Path = 'C:\VeeamAware',
     [ValidateSet('', 'stable', 'preview')][string]$Channel = '',   # default: the installed copy's channel, else stable
-    [string]$Tag,                         # a release tag (v0.3.0) or a branch name (main) instead of the newest release
+    [string]$Tag,                         # a release tag (v0.1.0) or a branch name (main) instead of the newest release
     [string]$Repository = 'inspirenxe/veeamaware',
     [switch]$Update,                      # no prompts, no test message (used by Update-VeeamAware.ps1)
     [string[]]$InstallerArguments = @()

@@ -14,7 +14,7 @@ while files are replaced.
 .\Update-VeeamAware.ps1 -Check            # only report what is available
 .\Update-VeeamAware.ps1                   # update to the newest release on the configured channel
 .\Update-VeeamAware.ps1 -Channel preview  # switch to the preview channel and update
-.\Update-VeeamAware.ps1 -Tag v0.3.0       # install exactly this release (also to go back a version)
+.\Update-VeeamAware.ps1 -Tag v0.1.0       # install exactly this release (also to go back a version)
 #>
 [CmdletBinding()]
 param(

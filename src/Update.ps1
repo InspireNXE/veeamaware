@@ -3,7 +3,7 @@
 #   stable   newest release that is not marked "pre-release"
 #   preview  newest release of any kind (pre-releases included), so preview users also get stable fixes
 #
-# Tags are semantic versions with an optional "v": v0.3.0, v0.4.0-preview.1. The module version in
+# Tags are semantic versions with an optional "v": v0.1.0, v0.2.0-preview.1. The module version in
 # VeeamAware.psm1 is the installed version. install.ps1 (the bootstrap) carries its own copy of the release
 # lookup, because it runs before any of this is on disk.
 
@@ -16,7 +16,7 @@ function ConvertTo-VASemVer {
 }
 
 function Compare-VAVersion {
-    <# -1 / 0 / 1 like [string]::Compare. A pre-release sorts before its release (0.3.0-preview.1 < 0.3.0). #>
+    <# -1 / 0 / 1 like [string]::Compare. A pre-release sorts before its release (0.1.0-preview.1 < 0.1.0). #>
     param([Parameter(Mandatory)][string]$A, [Parameter(Mandatory)][string]$B)
     $x = ConvertTo-VASemVer $A; $y = ConvertTo-VASemVer $B
     if (-not $x -or -not $y) { throw "Not a version: '$(if (-not $x) { $A } else { $B })'" }

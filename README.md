@@ -101,7 +101,7 @@ Agent jobs and agent policies use different script settings, so `Register-VeeamA
 C:\VeeamAware\Update-VeeamAware.ps1 -Check             # what's available
 C:\VeeamAware\Update-VeeamAware.ps1                    # install the newest release on your channel
 C:\VeeamAware\Update-VeeamAware.ps1 -Channel preview   # switch channel (saved to the config) and update
-C:\VeeamAware\Update-VeeamAware.ps1 -Tag v0.3.0        # install a specific release, e.g. to go back
+C:\VeeamAware\Update-VeeamAware.ps1 -Tag v0.1.0        # install a specific release, e.g. to go back
 ```
 
 | Channel | Gets |
