@@ -282,6 +282,7 @@ function Edit-Hooks {
     Write-VAHeading 'Post-job hook'
     Write-VAHint 'Sends a job''s report the moment it ends. Without it the watcher reports finished jobs within a few minutes.'
     $reg = Join-Path $root 'Register-VeeamAwareJob.ps1'
+    Write-VAHint 'Reading your jobs from VBR…'
     try {
         & $reg
         Write-Host ''
@@ -367,6 +368,7 @@ if ($interactive -and -not $new -and -not $SkipTest) {
 }
 if (-not $SkipTest -and -not $Update) {
     $connArgs = @{ Config = $config }; if ($RestCredential) { $connArgs.Credential = $RestCredential }
+    Write-VAHint 'Checking that VeeamAware can read VBR. Loading Veeam''s PowerShell module can take a minute or two…'
     Connect-VASource @connArgs
     try {
         $sourceText = Get-VASourceDescription
@@ -380,6 +382,7 @@ if (-not $SkipTest -and -not $Update) {
 
 # 5. Scheduled task -----------------------------------------------------------------------------------------
 if (-not $SkipTasks) {
+    Write-VAHint 'Setting up the scheduled task…'
     $pwsh = Join-Path $PSHOME 'pwsh.exe'
     $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -StartWhenAvailable
@@ -414,4 +417,12 @@ elseif (-not $Update -and -not $interactive) {
     Write-Host "    cd $root" -ForegroundColor Cyan
     Write-Host '    .\Register-VeeamAwareJob.ps1          ' -NoNewline -ForegroundColor Cyan; Write-Host '# review' -ForegroundColor DarkGray
     Write-Host '    .\Register-VeeamAwareJob.ps1 -Apply   ' -NoNewline -ForegroundColor Cyan; Write-Host '# attach' -ForegroundColor DarkGray
+}
+
+# 7. Done ---------------------------------------------------------------------------------------------------
+if ($interactive) {
+    Write-VAHeading 'Done'
+    Write-VADone 'VeeamAware is set up. The watcher runs every few minutes and sends the digests on schedule.'
+    Write-VAHint "Change settings any time: $root\Install-VeeamAware.ps1"
+    Write-VAHint "Logs: $root\logs"
 }

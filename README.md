@@ -96,7 +96,7 @@ Click a card type to see it. Every name, address and number in these is made up.
 ### Before you start
 
 You need:
-- **VBR 13.0 or 13.1 on Windows.** Tested on 13.1.0.411 and 13.1.1.700, Community Edition.
+- **VBR 13.0 or 13.1 on Windows.** Tested on 13.1.0.411, 13.1.1.700 and 13.1.2.57, Community Edition.
 - **A webhook URL** for each place you want notifications:
   - **Discord:** channel settings → Integrations → Webhooks → New Webhook → copy the URL.
   - **Teams:** the channel's **⋯** menu → Workflows → *Post to a channel when a webhook request is received* → copy the URL.

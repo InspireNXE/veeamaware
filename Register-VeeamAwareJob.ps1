@@ -32,7 +32,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Import-Module Veeam.Backup.PowerShell -DisableNameChecking -WarningAction SilentlyContinue
-Connect-VBRServer -ErrorAction SilentlyContinue   # local server; no-op if already connected
+# Local server. VBR 13 throws when this session is already connected (the installer's VBR check leaves it
+# connected), and -ErrorAction can't silence that, so ignore just that error.
+try { Connect-VBRServer -ErrorAction Stop }
+catch { if ($_.Exception.Message -notmatch 'already connected') { throw } }
 
 $pwsh = Join-Path $PSHOME 'pwsh.exe'
 $hook = Join-Path $PSScriptRoot 'VeeamAware.ps1'
