@@ -48,10 +48,28 @@ catch { }   # not there, or not empty
 # 3. Files ---------------------------------------------------------------------------------------------------
 if ($RemoveFiles) {
     if ($PSCmdlet.ShouldProcess($root, 'Delete the VeeamAware folder, including config, secrets, state and logs')) {
-        # This script lives in the folder; delete it from a separate process once this one has exited.
-        $cmd = "Start-Sleep -Seconds 3; Remove-Item -LiteralPath '$($root -replace "'", "''")' -Recurse -Force"
-        Start-Process -FilePath (Join-Path $PSHOME 'pwsh.exe') -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd -WindowStyle Hidden
-        Write-Host "Deleting $root in a few seconds."
+        # Windows can't delete a folder that is any process's current directory. Step this session out of it
+        # (a script shares its caller's location, so this moves the caller's prompt too) and start the
+        # deleting process somewhere else.
+        $outside = $env:SystemDrive + '\'
+        $here = (Get-Location).ProviderPath
+        $moved = $false
+        if ($here -and ($here.TrimEnd('\') + '\').StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            Set-Location $outside; $moved = $true
+        }
+        # Set-Location doesn't change the process's own working directory, which also holds the folder.
+        if (([Environment]::CurrentDirectory.TrimEnd('\') + '\').StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            [Environment]::CurrentDirectory = $outside
+        }
+        # This script lives in the folder; delete it from a separate process once this one has exited, and keep
+        # trying for a minute in case something else (Explorer, another window) still holds it.
+        $q = $root -replace "'", "''"
+        $cmd = "Start-Sleep -Seconds 3; for (`$i = 0; `$i -lt 30 -and (Test-Path -LiteralPath '$q'); `$i++) { " +
+        "Remove-Item -LiteralPath '$q' -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath '$q') { Start-Sleep -Seconds 2 } }"
+        Start-Process -FilePath (Join-Path $PSHOME 'pwsh.exe') -WorkingDirectory $outside -WindowStyle Hidden `
+            -ArgumentList '-NoProfile', '-NonInteractive', '-Command', $cmd
+        if ($moved) { Write-Host "Moved this window to $outside so the folder can be deleted." }
+        Write-Host "Deleting $root in a few seconds. If it's still there after a minute, close any window or Explorer tab open in it and delete it by hand."
     }
 }
 else {
