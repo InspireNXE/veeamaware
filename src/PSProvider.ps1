@@ -405,6 +405,31 @@ function Get-VAPSTaskSessions {
             result   = [pscustomobject]@{ result = $status; message = "$(Get-VAPSField $t $f.Reason '')".Trim() }
             progress = ConvertTo-VAPSProgress (Get-VAPSField $t $f.Progress)
             platform = "$(Get-VAPSField $t $f.Platform '')"
+            objectId = "$(Get-VAPSField $t $f.ObjectId '')"
+        }
+    }
+}
+
+function Get-VAPSAgentComputers {
+    <#
+    Every computer in a protection group with the state of its Veeam Agent:
+    { objectId, name, protectionGroup, state, agentStatus, agentVersion, rebootRequired }.
+    objectId matches the objectId of the agent job's task for that machine.
+    #>
+    $f = $script:VAPS.Profile.Computer
+    foreach ($pg in @(Invoke-VAPSCmdlet ProtectionGroups)) {
+        $computers = @(try { Invoke-VAPSCmdlet DiscoveredComputers @{ ProtectionGroup = $pg; ErrorAction = 'SilentlyContinue' } }
+            catch { Write-VALog "Computers of protection group '$($pg.Name)' unavailable: $($_.Exception.Message)" -Level Debug })
+        foreach ($c in $computers) {
+            [pscustomobject]@{
+                objectId        = "$(Get-VAPSField $c $f.ObjectId '')"
+                name            = "$(Get-VAPSField $c $f.Name '')"
+                protectionGroup = "$($pg.Name)"
+                state           = "$(Get-VAPSField $c $f.State '')"
+                agentStatus     = "$(Get-VAPSField $c $f.AgentStatus '')"
+                agentVersion    = "$(Get-VAPSField $c $f.AgentVersion '')"
+                rebootRequired  = [bool](Get-VAPSField $c $f.RebootRequired $false)
+            }
         }
     }
 }

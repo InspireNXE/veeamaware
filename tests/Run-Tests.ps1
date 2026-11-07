@@ -234,10 +234,59 @@ It 'failure report: history fields, no repository bar' {
     Add-VAHistoryContext -Summary $f -History $h | Out-Null
     Assert-Eq $f.FailStreak 3; Assert-Eq ($f.Recent -join ',') 'Success,Failed,Failed,Failed'
     $e = New-VASessionEmbeds -Config $config -Summary $f
-    Assert ($e[0].description -match '🟩🟥🟥🟥 3rd failure in a row') "history strip: $($e[0].description)"
+    $fact = { param($name) ($e[0].fields | Where-Object name -eq $name).value }
+    $line = ($e[0].description -split "`n")[0]
+    Assert ($line -match '🟩🟥🟥🟥') "the status line carries the strip like every other job card: $line"
+    Assert ($line -match '3rd failure in a row') "streak beside the strip: $line"
+    Assert (-not ($e[0].fields | Where-Object name -in 'Recent runs', 'In a row')) 'no history facts'
     Assert ((($e[0].fields | Where-Object name -eq 'Last success').value) -match '^<t:\d+:R>$') 'last success time'
     Assert ($e[0].description -match 'Disk full') 'error quoted'
     Assert-Eq $e[0].thumbnail.url 'attachment://status-failed.png'
+}
+$agentFailLog = @(   # PC-ACCT-02 after the VBR 13.1 upgrade, as Veeam logged it
+    [pscustomobject]@{ id = 1; status = 'Succeeded'; title = 'Job started at 11/6/2026 11:32:49 PM' }
+    [pscustomobject]@{ id = 2; status = 'Succeeded'; title = 'Backup agent PC-ACCT-02.corp.example requires upgrade' }
+    [pscustomobject]@{ id = 3; status = 'Warning'; title = 'Server 192.0.2.20 has an outdated Data Mover service version.' }
+    [pscustomobject]@{ id = 4; status = 'Failed'; title = 'Processing PC-ACCT-02.corp.example Error: Failed to connect to agent at 192.0.2.20. Rescan the machine and try again.' }
+    [pscustomobject]@{ id = 5; status = 'Failed'; title = 'Job finished with error at 11/6/2026 11:33:37 PM' }
+)
+$agentFailTask = [pscustomobject]@{ id = 't1'; name = 'PC-ACCT-02.corp.example'; state = 'Stopped'; objectId = 'a1b2c3d4'
+    result = [pscustomobject]@{ result = 'Failed'; message = 'Task failed. Error: Failed to connect to agent at 192.0.2.20. Rescan the machine and try again.' } }
+It 'agent failure: the log line that explains it is quoted before the symptom' {
+    $f = Get-VASessionSummary -Session (New-MockSession -Name 'PC-ACCT-02' -Type 'AgentBackup' -Result 'Failed') -TaskSessions @($agentFailTask) -Log $agentFailLog
+    Assert-Eq $f.Hints.Count 2
+    Assert-Eq $f.Tasks[0].ObjectId 'a1b2c3d4'
+    $d = (New-VASessionEmbeds -Config $config -Summary $f)[0].description
+    $cause = $d.IndexOf('requires upgrade'); $symptom = $d.IndexOf('Failed to connect')
+    Assert ($cause -ge 0 -and $symptom -gt $cause) $d
+}
+It 'agent failure: the protection group status says what to do' {
+    $f = Get-VASessionSummary -Session (New-MockSession -Name 'PC-ACCT-02' -Type 'AgentBackup' -Result 'Failed') -TaskSessions @($agentFailTask) -Log $agentFailLog
+    $f.Agents = @([pscustomobject]@{ objectId = 'a1b2c3d4'; name = '192.0.2.20'; protectionGroup = 'Manually Added'; state = 'Online'
+            agentStatus = 'UpgradeAvailable'; agentVersion = '13.1.1.700'; rebootRequired = $false })
+    # Laid out like every other card: issue on the status line, version as a fact, fix as the note.
+    $e = (New-VASessionEmbeds -Config $config -Summary $f)[0]
+    $d = $e.description
+    Assert ($d -notmatch 'out of date') 'the status line keeps its usual parts'
+    Assert ($d -match '\n-# Upgrade the agent from the console: Inventory → Physical Infrastructure → Manually Added, right-click the computer → Upgrade\.$') $d
+    Assert ($d -match '> \*\*PC-ACCT-02.corp.example\*\*\n> Task failed') 'the error stays the quote'
+    Assert ($d -notmatch 'requires upgrade') 'log hints are left out when the agent status already explains it'
+    Assert-Eq (($e.fields | Where-Object name -eq 'Agent').value) '13.1.1.700 · out of date'
+    $two = @($f.Agents[0], ([pscustomobject]@{ name = 'b'; agentStatus = 'UpgradeAvailable'; agentVersion = '13.1.1.700' }))
+    Assert-Eq @(@(Get-VAAgentIssues $two) | Group-Object Issue).Count 1
+    $f.Agents = $two
+    Assert-Eq (((New-VASessionEmbeds -Config $config -Summary $f)[0].fields | Where-Object name -eq 'Agents').value) '2 out of date'
+    Assert-Eq @(Get-VAAgentIssues @([pscustomobject]@{ name = 'ok'; state = 'Online'; agentStatus = 'Installed'; agentVersion = '13'; rebootRequired = $false })).Count 0
+    Assert-Eq (Get-VAAgentIssues @([pscustomobject]@{ name = 'r'; state = 'Online'; agentStatus = 'Installed'; agentVersion = '13'; rebootRequired = $true })).Issue 'reboot pending'
+}
+It 'object rows fit beside the status badge' {
+    $rows = @(
+        [ordered]@{ status = 'Failed'; name = 'PC-ACCT-02.corp.example'; size = '0 B'; duration = '' }
+        [ordered]@{ status = 'Success'; name = 'a-much-longer-server-name.example.internal'; size = '12.4 GB'; duration = '1h 02m' }
+    )
+    foreach ($l in (Format-VAObjectTable -Rows $rows -Ansi $false)) { Assert ($l.Length -le 38) "too wide ($($l.Length)): $l" }
+    $one = @(Format-VAObjectTable -Rows @($rows[0]) -Ansi $false)
+    Assert-Eq $one[0] '✖ PC-ACCT-02.corp.example  0 B'
 }
 It 'compares with the usual run and reports recovery' {
     $now = [datetimeoffset]::UtcNow
@@ -250,7 +299,7 @@ It 'compares with the usual run and reports recovery' {
     Assert $ok.Recovered 'recovered'; Assert-Eq $ok.UsualTransferred (10GB)
     $e = New-VASessionEmbeds -Config $config -Summary $ok
     Assert ($e[0].description -match '\*\*RECOVERED\*\*') 'recovered label'
-    Assert ($e[0].description -match 'down \d') 'down time'
+    Assert ($e[0].description -match 'down\s\d') 'down time'
     Assert ((($e[0].fields | Where-Object name -eq 'Transferred').value) -match '▲ \d+(\.\d)?× usual') 'transfer jump flagged'
     Assert ((($e[0].fields | Where-Object name -eq 'Duration').value) -match 'usual 10m|× usual') 'usual duration'
     Assert-Eq (Format-VAUsualDelta (11GB) (10GB) 3 256MB) ''
@@ -336,11 +385,11 @@ It 'builds a digest with agents, jobs, repos and malware' {
     $samples.Add(@{ Content = ''; Embeds = $e })
 }
 It 'digest leads with what needs attention and collapses healthy jobs' {
-    $to = [datetimeoffset]::UtcNow
-    $other = @(1..6 | ForEach-Object { New-MockSession -Name "Job $_" -Result 'Success' -MinutesAgo 60 })
-    $other += New-MockSession -Name 'Prod' -Result 'Failed' -MinutesAgo 30
-    $hist = @(1..3 | ForEach-Object { $s = New-MockSession -Name 'Prod' -Result 'Failed' -MinutesAgo (1440 * $_); $s.id = "old$_"; $s })
-    $hist += & { $s = New-MockSession -Name 'Prod' -Result 'Success' -MinutesAgo (1440 * 4); $s.id = 'old4'; $s }
+    $to = [datetimeoffset](Get-Date).Date.AddHours(12)   # local midday: "30 minutes ago" stays today
+    $other = @(1..6 | ForEach-Object { New-MockSession -Name "Job $_" -Result 'Success' -MinutesAgo 60 -Now $to })
+    $other += New-MockSession -Name 'Prod' -Result 'Failed' -MinutesAgo 30 -Now $to
+    $hist = @(1..3 | ForEach-Object { $s = New-MockSession -Name 'Prod' -Result 'Failed' -MinutesAgo (1440 * $_) -Now $to; $s.id = "old$_"; $s })
+    $hist += & { $s = New-MockSession -Name 'Prod' -Result 'Success' -MinutesAgo (1440 * 4) -Now $to; $s.id = 'old4'; $s }
     $r = New-VADigestReport -Config $config -From $to.AddDays(-1) -To $to -OtherSessions $other -HistorySessions $hist -AnalyzerViolations 20 -PreviousAnalyzerViolations 19
     Assert-Eq $r.title '1 job needs attention'; Assert-Eq $r.status 'failed'
     Assert ((Format-VAParts $r.quotes[0].parts) -match 'failed 4 runs in a row') "streak: $(Format-VAParts $r.quotes[0].parts)"

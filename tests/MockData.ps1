@@ -2,15 +2,17 @@
 # a few optional fields are deliberately left out to exercise the null-safe readers.
 
 function New-MockSession {
-    param([string]$Name = 'Prod VMs', [string]$Type = 'BackupJob', [string]$Result = 'Success', [int]$MinutesAgo = 10, [string]$Message = '')
+    # -Now pins "now" for tests that bucket by local day (otherwise they fail just after midnight).
+    param([string]$Name = 'Prod VMs', [string]$Type = 'BackupJob', [string]$Result = 'Success', [int]$MinutesAgo = 10, [string]$Message = '',
+        [datetimeoffset]$Now = [datetimeoffset]::UtcNow)
     [pscustomobject]@{
         id           = [guid]::NewGuid().ToString()
         jobId        = [guid]::NewGuid().ToString()
         name         = $Name
         sessionType  = $Type
         state        = 'Stopped'
-        creationTime = [datetimeoffset]::UtcNow.AddMinutes(-$MinutesAgo - 37).ToString('o')
-        endTime      = [datetimeoffset]::UtcNow.AddMinutes(-$MinutesAgo).ToString('o')
+        creationTime = $Now.AddMinutes(-$MinutesAgo - 37).ToString('o')
+        endTime      = $Now.AddMinutes(-$MinutesAgo).ToString('o')
         result       = [pscustomobject]@{ result = $Result; message = $Message; isCanceled = $false }
         progressPercent = 100
     }

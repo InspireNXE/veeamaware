@@ -274,6 +274,7 @@ function Get-VASessionSummary {
             Name        = "$(Get-VAProp $t 'name' (Get-VAProp $t 'objectName' '(unnamed)'))"
             Result      = "$(Get-VAProp $t 'result.result' (Get-VAProp $t 'result' 'None'))"
             Message     = "$(Get-VAProp $t 'result.message' '')".Trim()
+            ObjectId    = "$(Get-VAProp $t 'objectId' '')"
             Processed   = Get-VAProp $p 'processedSize'
             Read        = Get-VAProp $p 'readSize'
             Transferred = Get-VAProp $p 'transferredSize'
@@ -316,6 +317,11 @@ function Get-VASessionSummary {
     $problemLog = @($Log | Where-Object { "$(Get-VAProp $_ 'status')" -match 'Warning|Fail|Error' } | ForEach-Object {
             [pscustomobject]@{ Status = "$(Get-VAProp $_ 'status')"; Title = "$(Get-VAProp $_ 'title')".Trim() }
         } | Where-Object Title)
+    # Lines that say why, whatever status Veeam gave them: "Backup agent X requires upgrade" is logged as
+    # Succeeded, and the task error that follows only says "Failed to connect to agent ... Rescan".
+    $hints = @($Log | Where-Object { "$(Get-VAProp $_ 'title')" -match $script:VACauseHint } | ForEach-Object {
+            [pscustomobject]@{ Status = "$(Get-VAProp $_ 'status')"; Title = "$(Get-VAProp $_ 'title')".Trim() }
+        } | Where-Object Title)
 
     [pscustomobject]@{
         Id          = "$(Get-VAProp $Session 'id')"
@@ -340,6 +346,35 @@ function Get-VASessionSummary {
         Bottleneck  = $bottleneck
         Tasks       = $tasks
         ProblemLog  = $problemLog
+        Hints       = $hints
+        Agents      = @()   # Add-VASessionContext: protection-group status of the job's agent machines
+    }
+}
+
+# Session log titles that explain a failure even when Veeam logs them as Succeeded or Info.
+$script:VACauseHint = '(?i)requires? (an )?upgrade|outdated|out of date|upgrade (is )?(available|required)|(reboot|restart) (is )?required|licen[cs]e|not enough|insufficient|no (free )?space|access (is )?denied|not supported|unsupported'
+
+function Get-VAAgentIssues {
+    <#
+    Agent machines whose protection-group status explains a failure: agent out of date, not installed, reboot
+    pending, offline. Each: { Issue (short, for the status line), Plural, Name, Version, Fix (what to do, for
+    the note) }. Empty when every agent looks fine. The session report lays these out like every other card:
+    the issue on the status line, the version as a fact, the fix as the note, the error stays the quote.
+    #>
+    param([object[]]$Agents)
+    foreach ($a in @($Agents | Where-Object { $_ })) {
+        $pg = "$(Get-VAProp $a 'protectionGroup' '')"
+        $where = "Inventory → Physical Infrastructure → $(if ($pg) { $pg } else { 'its protection group' })"
+        $state = "$(Get-VAProp $a 'state' '')"
+        $i = switch -Regex ("$(Get-VAProp $a 'agentStatus' '')") {
+            'Upgrade' { @('agent out of date', 'agents out of date', "Upgrade the agent from the console: $where, right-click the computer → Upgrade."); break }
+            'NotInstalled|Missing' { @('agent not installed', 'agents not installed', "Install the agent from the console: $where, right-click the computer → Install agent."); break }
+            default {
+                if ([bool](Get-VAProp $a 'rebootRequired' $false)) { @('reboot pending', 'reboots pending', 'Restart the computer to finish the agent install or upgrade.') }
+                elseif ($state -and $state -ne 'Online') { @("computer $($state.ToLowerInvariant())", "computers $($state.ToLowerInvariant())", "Check the computer is on and reachable, then $where, right-click it → Rescan.") }
+            }
+        }
+        if ($i) { [pscustomobject]@{ Issue = $i[0]; Plural = $i[1]; Name = "$(Get-VAProp $a 'name' '')"; Version = "$(Get-VAProp $a 'agentVersion' '')"; Fix = $i[2] } }
     }
 }
 
@@ -356,6 +391,19 @@ function Add-VASessionContext {
     $hasJob = $s.JobId -and $s.JobId -ne '00000000-0000-0000-0000-000000000000'
     $raw = if ($hasJob) { Test-VARestOptional -What 'job history' { @(Get-VAJobHistory -JobId $s.JobId -Count 30) } }
     Add-VAHistoryContext -Summary $s -History $raw | Out-Null
+    # A failed agent job usually only says "failed to connect"; the protection group knows whether the agent
+    # is out of date, needs a reboot or is offline.
+    $ids = @($s.Tasks | Where-Object { $_.Result -notmatch '^Success' -and $_.ObjectId } | ForEach-Object ObjectId)
+    if ($s.Result -notmatch '^Success' -and $s.Type -match 'Agent' -and $ids) {
+        $computers = @(Test-VARestOptional -What 'agent computer status' { Get-VAAgentComputers }) | Where-Object { $_ }
+        # Protection groups often list a machine by IP; the task carries its name.
+        $s | Add-Member Agents @($computers | Where-Object { $ids -contains $_.objectId } | ForEach-Object {
+                $c = $_ | Select-Object *
+                $t = $s.Tasks | Where-Object ObjectId -eq $c.objectId | Select-Object -First 1
+                if ($t -and $t.Name -and $t.Name -ne $c.name) { $c.name = "$($t.Name) ($($c.name))" }
+                $c
+            }) -Force
+    }
     $repos = @(Test-VARestOptional -What 'repository states' { Get-VARepositoryStates }) | Where-Object { $_ }
     if (-not $repos) { return $s }
     $repoId = if ($hasJob) { Test-VARestOptional -What 'job repository' { Get-VAJobRepositoryId -JobId $s.JobId } } else { '' }
@@ -473,8 +521,9 @@ function New-VASessionReport {
     .SYNOPSIS
     The per-job report. Same shape for every result so the eye always lands in the same place:
       header (job type) / title (job) / status line / what went wrong / stats / objects
-    Stats depend on the result: success shows the six throughput figures, a warning the three that explain it,
-    a failure the job's recent history (last success, failures in a row).
+    The status line carries the run-history strip for every result. Stats depend on the result: success
+    shows the six throughput figures, a warning the three that explain it, a failure the last success and,
+    for agents, the agent's state.
     #>
     param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)]$Summary)
     $s = $Summary
@@ -483,6 +532,9 @@ function New-VASessionReport {
     $isOk = $s.Result -match '^Success'
     $isFail = $s.Result -match '^Fail'
     $problems = @($s.Tasks | Where-Object Result -notmatch '^Success')
+    # Agent machines whose protection-group status explains the failure (agent out of date, ...).
+    $issues = @(if (-not $isOk) { Get-VAAgentIssues @(Get-VAProp $s 'Agents' @()) })
+    $issueText = @($issues | Group-Object Issue | ForEach-Object { if ($_.Count -gt 1) { "$($_.Count) $($_.Group[0].Plural)" } else { $_.Name } }) -join ', '
 
     $recovered = [bool](Get-VAProp $s 'Recovered' $false)
     $recent = @(Get-VAProp $s 'Recent' @())
@@ -490,6 +542,10 @@ function New-VASessionReport {
     $stripText = if ($isFail -and $streak -ge 2) { "$(Format-VAOrdinal $streak) failure in a row" }
     elseif ($recovered -and (Get-VAProp $s 'DownFor')) { "down $(Format-VADuration $s.DownFor)" }
     elseif ($recent.Count -gt 1) { "last $($recent.Count) runs" }
+    # Non-breaking spaces keep the streak phrase on one line with its strip if Discord wraps the status line.
+    if ($stripText) { $stripText = $stripText -replace ' ', [char]0x00A0 }
+    # Every result carries the run-history strip on its status line, so all job cards look alike. The agent
+    # cause is a fact below, never here, so the line stays readable.
     $summary = @(
         if ($s.Start -and $s.End) { New-VARangePart $s.Start $s.End } elseif ($s.Start) { New-VATimePart $s.Start 't' 'started ' }
         if ($s.Duration) { Format-VADuration $s.Duration }
@@ -503,6 +559,14 @@ function New-VASessionReport {
     $quotes = [System.Collections.Generic.List[object]]::new()
     $note = $null
     if (-not $isOk) {
+        # Without an agent status to explain it, the log lines that do (Veeam often logs those as Succeeded),
+        # quoted like any other log line, before the object errors they explain.
+        if (-not $issues.Count) {
+            $taskText = @($problems | ForEach-Object Message) -join ' '
+            foreach ($h in @(@(Get-VAProp $s 'Hints' @()) | Where-Object { $taskText -notlike "*$($_.Title)*" } | Select-Object -First 2)) {
+                $quotes.Add([ordered]@{ icon = $(if ($h.Status -match 'Fail|Error') { '❌' } else { '⚠️' }); text = Limit-VAText ($h.Title -replace '\s+', ' ') 300 })
+            }
+        }
         $withMsg = @($problems | Where-Object Message)
         foreach ($t in ($withMsg | Select-Object -First 3)) {
             $quotes.Add([ordered]@{ title = $t.Name; text = Limit-VAText ($t.Message -replace '\s+', ' ') 400 })
@@ -514,6 +578,9 @@ function New-VASessionReport {
         }
         if (-not $quotes.Count -and $s.Message) { $quotes.Add([ordered]@{ text = Limit-VAText ($s.Message -replace '\s+', ' ') 600 }) }
         if ($withMsg.Count -gt 3) { $note = "…and $($withMsg.Count - 3) more object(s) with messages below" }
+        # What to do, in the note like the other cards (malware, services): one line per kind of issue.
+        $fixes = @($issues | ForEach-Object Fix | Select-Object -Unique)
+        if ($fixes) { $note = (@($fixes) + @($note) | Where-Object { $_ }) -join ' ' }
     }
 
     $size = { param($v) if ($v -gt 0) { Format-VASize $v } }
@@ -542,6 +609,12 @@ function New-VASessionReport {
         @(
             New-VAFact 'Last success' $(if (Get-VAProp $s 'LastSuccess') { New-VATimePart $s.LastSuccess 'R' } elseif ($known) { 'none in recent runs' })
             New-VAFact 'Transferred' $xfer
+            # The cause as a fact (the status line stays one line): "13.1.1.700 · out of date", "2 out of date".
+            if ($issues.Count) {
+                $vers = @($issues | Where-Object Version | ForEach-Object Version | Select-Object -Unique)
+                $what = $issueText -replace '\bagents? ', ''
+                New-VAFact $(if ($issues.Count -gt 1) { 'Agents' } else { 'Agent' }) $(if ($issues.Count -eq 1 -and $vers.Count -eq 1) { "$($vers[0]) · $what" } else { $what })
+            }
         )
     }
     else {
@@ -560,7 +633,7 @@ function New-VASessionReport {
                 status   = $_.Result
                 name     = $_.Name
                 size     = if ($_.Transferred -gt 0) { Format-VASize $_.Transferred } elseif ($_.Result -match '^Fail') { '0 B' } else { '' }   # 0 = not tracked (agents)
-                duration = if ($_.Duration) { Format-VADuration $_.Duration } else { '' }
+                duration = if ($_.Duration -and $_.Duration.TotalSeconds -ge 1) { Format-VADuration $_.Duration } else { '' }   # an object that never started has no time
                 message  = if ($_.Result -notmatch '^Success' -and $_.Message) { Limit-VAText ($_.Message -replace '\s+', ' ') 300 } else { $null }
             }
         })

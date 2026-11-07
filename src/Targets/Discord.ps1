@@ -129,18 +129,30 @@ function Format-VADiscordParts {
 }
 
 function Format-VAObjectTable {
-    <# Object rows for the ```ansi block: status mark, name, transferred, duration — columns aligned. #>
-    param([object[]]$Rows, [bool]$Ansi, [int]$More = 0)
+    <#
+    Object rows for the ```ansi block: status mark, name, transferred, duration, columns aligned. Each line
+    stays within $Width columns (the status badge narrows the embed; a longer line wraps its last column onto
+    its own line): size and duration columns are as wide as their widest value, empty ones are left out, and
+    the name gets the rest.
+    #>
+    param([object[]]$Rows, [bool]$Ansi, [int]$More = 0, [int]$Width = 38)
     $rows = @($Rows)
     if (-not $rows) { return @() }
-    $w = [Math]::Min(26, [Math]::Max(8, ($rows | ForEach-Object { "$($_.name)".Length } | Measure-Object -Maximum).Maximum))
+    $colW = { param($key) [int](@($rows | ForEach-Object { "$($_[$key])".Length }) + 0 | Measure-Object -Maximum).Maximum }
+    $sizeW = & $colW 'size'; $durW = & $colW 'duration'
+    $room = $Width - 2 - $(if ($sizeW) { 2 + $sizeW } else { 0 }) - $(if ($durW) { 2 + $durW } else { 0 })
+    $longest = [int](@($rows | ForEach-Object { "$($_.name)".Length }) | Measure-Object -Maximum).Maximum
+    $w = [Math]::Max(10, [Math]::Min($longest, $room))
     $lines = foreach ($t in $rows) {
         $mark, $color = switch -Regex ($t.status) {
             '^Success' { '✔', 'green' } '^Warning' { '▲', 'yellow' } '^Fail' { '✖', 'red' } default { '•', 'gray' }
         }
         $nm = "$($t.name)"
         $name = if ($nm.Length -gt $w) { $nm.Substring(0, $w - 1) + '…' } else { $nm.PadRight($w) }
-        "$(Format-VAAnsi $mark $color $Ansi) $(Format-VAAnsi $name 'white' $Ansi)  $("$($t.size)".PadLeft(9))  $("$($t.duration)".PadLeft(7))".TrimEnd()
+        $line = "$(Format-VAAnsi $mark $color $Ansi) $(Format-VAAnsi $name 'white' $Ansi)"
+        if ($sizeW) { $line += '  ' + "$($t.size)".PadLeft($sizeW) }
+        if ($durW) { $line += '  ' + "$($t.duration)".PadLeft($durW) }
+        $line.TrimEnd()
     }
     if ($More -gt 0) { $lines = @($lines) + (Format-VAAnsi "  …and $More more" 'gray' $Ansi) }
     return @($lines)

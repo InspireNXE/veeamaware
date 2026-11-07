@@ -26,6 +26,8 @@
         AnalyzerResults  = 'Get-VBRSecurityComplianceAnalyzerResults'
         AuthorizationEvents = ''                             # no cmdlet for four-eyes requests in 13.x
         LocalServer      = 'Get-VBRServer'                   # -Type Local, used as a connectivity check
+        ProtectionGroups = 'Get-VBRProtectionGroup'
+        DiscoveredComputers = 'Get-VBRDiscoveredComputer'    # -ProtectionGroup <group>: agent version and status
     }
 
     # Veeam JobType -> VeeamAware session type (same vocabulary as the REST API's sessionType).
@@ -82,6 +84,17 @@
         Reason   = @('Info.Reason')
         Progress = @('Progress', 'Info.Progress')
         Platform = @('ObjectPlatform', 'Info.ObjectPlatform')
+        ObjectId = @('ObjectId', 'Info.ObjectId')   # agent tasks: matches the discovered computer's ObjectId
+    }
+
+    # Get-VBRDiscoveredComputer: a computer in a protection group and the state of its Veeam Agent.
+    Computer          = @{
+        ObjectId       = @('ObjectId')
+        Name           = @('Name')
+        State          = @('State')            # Online / Offline
+        AgentStatus    = @('AgentStatus')      # Installed / UpgradeAvailable / NotInstalled ...
+        AgentVersion   = @('AgentVersion')
+        RebootRequired = @('RebootRequired@bool')
     }
 
     Log               = @{

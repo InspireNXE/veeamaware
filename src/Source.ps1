@@ -63,6 +63,15 @@ function Get-VASessions {
 }
 function Get-VATaskSessions { param([Parameter(Mandatory)][string]$SessionId) Invoke-VASource TaskSessions @{ SessionId = $SessionId } }
 function Get-VASessionLog { param([Parameter(Mandatory)][string]$SessionId) Invoke-VASource SessionLog @{ SessionId = $SessionId } }
+function Get-VAAgentComputers {
+    <# Protection-group computers with their Veeam Agent's status and version (PowerShell source only). #>
+    if ($script:VASource -ne 'powershell') {
+        $ex = [System.NotSupportedException]::new('Agent computer status is read through the Veeam PowerShell module only.')
+        $ex.Data['NotSupported'] = $true
+        throw $ex
+    }
+    Invoke-VASource AgentComputers
+}
 function Get-VAJobHistory {
     <# The job's most recent finished sessions, newest first: { id, result, startTime, endTime, transferredBytes (null when unknown) }. #>
     param([Parameter(Mandatory)][string]$JobId, [int]$Count = 20)
