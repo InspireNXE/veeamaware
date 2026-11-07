@@ -257,7 +257,7 @@ What has been run against a real server so far:
 | Server health | Service outages, reminders and recovery, and a real VBR 13 upgrade from the ISO, tested live. Stuck sessions only in the offline tests. |
 | Generic webhook | Offline tests only (payload, headers, signing) |
 | REST data source on a licensed edition | Built against the documented API, not yet tried on a licensed server |
-| VBR 13.0.x | Not tested |
+| VBR 13.0.x | Should work, but not yet tried on a real 13.0 server. If something is blank or wrong, attach the output of `tools\Probe-VeeamPowerShell.ps1` to an issue. |
 
 Reports from other setups are very welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
