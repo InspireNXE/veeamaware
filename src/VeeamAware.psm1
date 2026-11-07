@@ -4,7 +4,7 @@
 
 Set-StrictMode -Version 3.0
 
-$script:VAVersion = '0.1.0'
+$script:VAVersion = '0.1.0-preview.1'
 # GitHub owner/repo that releases and updates come from (config update.repository overrides it).
 $script:VARepository = 'inspirenxe/veeamaware'
 $script:VARoot = Split-Path -Parent $PSScriptRoot
