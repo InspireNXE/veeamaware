@@ -19,9 +19,14 @@ Reports say *why* something failed, not just that it did. For example, an agent 
 
 More examples are in the [gallery](#gallery). Every name, address and number in them is made up.
 
-VeeamAware was written from scratch for v13. It was inspired by tigattack's [VeeamNotify](https://github.com/tigattack/VeeamNotify) but shares no code with it.
+VeeamAware is an independent community project. It isn't affiliated with, endorsed by or supported by Veeam Software. Veeam and Veeam Backup & Replication are trademarks of Veeam Software. It takes its cue from tigattack's [VeeamNotify](https://github.com/tigattack/VeeamNotify) but was written from scratch for v13 and contains none of its code.
 
-> VeeamAware is an independent community project. It is not affiliated with, endorsed by or supported by Veeam Software. Veeam and Veeam Backup & Replication are trademarks of Veeam Software.
+> Version 0.1.0. It runs daily on a Community Edition server, but much hasn't been tried on other setups yet; see [Project status](#project-status).
+
+**Contents:** [What you get](#what-you-get) · [Gallery](#gallery) · [Install](#install) · [Updating](#updating) ·
+[How it works](#how-it-works) · [Configuration](#configuration) · [Server health](#server-health) · [Targets](#targets) ·
+[Troubleshooting](#troubleshooting) · [Uninstall](#uninstall) · [Security](#security) · [Project status](#project-status) ·
+[How it's made](#how-its-made) · [License](#license)
 
 ## What you get
 
@@ -170,7 +175,10 @@ C:\VeeamAware\Update-VeeamAware.ps1 -Tag v0.1.0        # install a specific rele
 | `stable` (default) | Full releases only |
 | `preview` | Pre-releases as well as full releases, whichever is newer |
 
-Updates come from this repository's GitHub releases. The updater pauses the watcher while it replaces files. It never touches `config\config.json`, `secrets\`, `state\`, `logs\` or your files in `plugins\`. When a newer release is out on your channel, the digest says so in its footer. Set `update.notify` to `false` to turn that off.
+Updates come from this repository's GitHub releases.
+- The updater pauses the watcher while it replaces files.
+- It never touches `config\config.json`, `secrets\`, `state\`, `logs\` or your files in `plugins\`.
+- When a newer release is out on your channel, the digest says so in its footer. Set `update.notify` to `false` to turn that off.
 
 ## How it works
 
@@ -268,24 +276,62 @@ The watcher sends each digest when it's due, so schedule changes need no reinsta
 
 The watcher checks the server on every pass. Health events have kind `health`, so a target can take or skip them with `kinds`.
 
-Alerts follow three timings, set once under `watch.health` (the installer asks for them) and overridable per check (`watch.health.services.repeatEveryMinutes` and so on):
+#### Alert timing
+
+Three timings apply to every check. The installer asks for them, and they live under `watch.health`. Any check can override them, for example `watch.health.services.repeatEveryMinutes`.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `firstAlertAfterMinutes` | `15` | A service must be down this long before the first alert. Hides reboots and restarts. |
-| `repeatEveryMinutes` | `60` | While a problem lasts, a reminder this often ("still not running, reminder 2"). `0` = alert once. Applies to services, stuck sessions and watcher failures. |
-| `backUpForMinutes` | `5` | A service must run again this long before "running again" is sent. |
+| `firstAlertAfterMinutes` | `15` | How long a problem must last before the first alert. Hides reboots and service restarts. |
+| `repeatEveryMinutes` | `60` | How often to remind you while it lasts. `0` alerts once. |
+| `backUpForMinutes` | `5` | How long a service must run again before "running again" is sent. |
+
+#### What is checked
 
 | Check | Alerts when | Settings (`watch.health.…`) |
 |---|---|---|
-| **Services** | A watched service has not been running for `firstAlertAfterMinutes` (15). Watched: services matching `include` (`Veeam*`, `postgresql*`, `MSSQL$VEEAMSQL*`, by name or display name) that start automatically, plus `required` (`VeeamBackupSvc`), which is reported as *Missing* if it disappears. One alert lists every stopped service, a reminder follows every `repeatEveryMinutes` while any stays down, and "running again" goes out once they have all run for `backUpForMinutes`. A service that comes back and drops again inside that window is the same outage. | `include`, `exclude`, `required`, `notifyRecovery` |
-| **Stuck sessions** | A session has run longer than 3× the job's usual run time (never before 2 h; 12 h when the job has no history), or its progress has not moved for 4 h. Backup copy sessions and idle sessions are skipped, since they stay open by design. The alert shares the job's fingerprint, so the job's own report resolves it. | `sessions.usualFactor`, `minHours`, `hours`, `noProgressMinutes`, `excludeTypes`, `excludeStates`, `excludeJobs`, `jobs` (e.g. `[{ "job": "File server*", "hours": 24 }]`) |
-| **Watcher** | The watcher failed 3 runs in a row (for example VBR unreachable). Failures while services are down or Veeam is upgrading don't count. If the scheduled task stops running altogether, the next post-job hook reports it (once a day). | `watcher.failureAlertAfter`, `notifyRecovery` |
-| **VBR updated** | VBR's version changed since the last pass (information only). | `upgrade.notifyVersionChange` |
+| **Services** | A watched service has been stopped for `firstAlertAfterMinutes` | `include`, `exclude`, `required`, `notifyRecovery` |
+| **Stuck sessions** | A session runs far longer than usual, or its progress stops moving | `sessions.*` |
+| **Watcher** | The watcher fails 3 runs in a row, for example when VBR is unreachable | `watcher.failureAlertAfter`, `notifyRecovery` |
+| **VBR updated** | VBR's version changed since the last pass (information only) | `upgrade.notifyVersionChange` |
 
-**Upgrades.** Health alerts pause while a Veeam installer is running: a process named like `upgrade.processNames`, an `msiexec`/`setup` process whose path or command line mentions Veeam, or a setup-like program (or anything started from a CD/ISO drive) published by Veeam, which covers `Setup.exe` on a mounted VBR ISO. Windows Installer being busy (an install in progress, or its service running) also counts while Veeam services are down. The permanent Veeam Updater processes never count. While an installer is active the watcher also skips its VBR checks and digests, so it never loads Veeam's PowerShell module while files are being replaced; it catches up on the next run. Alerts stay paused for `upgrade.quietMinutes` (30) after the last sign of the installer or VBR's version change, and the service timers start over. A signal that lasts longer than `upgrade.maxHours` (6) stops pausing alerts, so a lookalike process can't silence them for good. `tools\Probe-Health.ps1 -NoVbr` shows what VeeamAware sees without touching VBR; run it during an upgrade to check.
+**Services**
+- Watched: automatic-start services matching `include` (`Veeam*`, `postgresql*`, `MSSQL$VEEAMSQL*`, by name or display name), plus `required` (`VeeamBackupSvc`), which is reported as *Missing* if it disappears.
+- One alert lists every stopped service. Reminders follow while any stays down.
+- "Running again" goes out once they have all run for `backUpForMinutes`. A service that drops again inside that window counts as the same outage.
 
-**Maintenance mode.** For other planned work, pause health alerts by hand. Job reports and the other alerts still go out.
+**Stuck sessions**
+- A session is stuck when it has run 3× longer than the job usually takes (`usualFactor`), or its progress hasn't moved for 4 hours (`noProgressMinutes`).
+- Never before 2 hours (`minHours`), and 12 hours for a job with no history (`hours`).
+- Per-job limits: `jobs`, e.g. `[{ "job": "File server*", "hours": 24 }]`. Skip jobs with `excludeJobs`.
+- Backup copy and idle sessions are skipped, since they stay open by design.
+- The alert shares the job's fingerprint, so the job's own report resolves it.
+
+**Watcher**
+- Failures while services are down or Veeam is upgrading don't count.
+- If the scheduled task stops running altogether, the next post-job hook reports it, once a day.
+
+#### During Veeam upgrades
+
+Health alerts pause while a Veeam installer runs. VeeamAware treats these as an installer:
+
+- a process named like one in `upgrade.processNames`
+- `msiexec` or a setup process whose path or command line mentions Veeam
+- a setup-like program published by Veeam, or anything started from a CD/ISO drive. This covers `Setup.exe` on a mounted VBR ISO.
+- Windows Installer busy (an install in progress, or its service running), but only while Veeam services are down
+
+The Veeam Updater processes that always run never count.
+
+While an installer runs:
+- The watcher skips its VBR checks and digests, so it never loads Veeam's PowerShell module while files are being replaced. It catches up on the next run.
+- Alerts stay paused until `upgrade.quietMinutes` (30) after the installer finishes or VBR's version changes. The service timers then start over.
+- A signal that lasts longer than `upgrade.maxHours` (6) stops pausing alerts, so a lookalike process can't silence them for good.
+
+To see what VeeamAware detects, run `tools\Probe-Health.ps1 -NoVbr` during an upgrade. It doesn't touch VBR.
+
+#### Maintenance mode
+
+For other planned work, pause health alerts by hand. Job reports and the other alerts still go out.
 
 ```powershell
 C:\VeeamAware\Set-VeeamAwareMaintenance.ps1 -Minutes 120 -Reason 'Windows updates'
@@ -360,7 +406,12 @@ The body (`veeamaware.event/v1`) has:
 - `details`: structured data such as per-object results, byte counts and repository space
 - `report`: the neutral layout chat targets render (`veeamaware.report/v1`). It can be `null`.
 
-Every request carries `X-VeeamAware-Event: <kind>` and `X-VeeamAware-Delivery: <id>`. With `tokenFile` it also sends `Authorization: Bearer …`. With `signingSecretFile` it adds `X-VeeamAware-Signature: sha256=<hex HMAC-SHA256 of the raw body>`. Deliveries are retried on 429 and 5xx, and one failing target never blocks the others.
+Headers on every request:
+- `X-VeeamAware-Event: <kind>` and `X-VeeamAware-Delivery: <id>`
+- `Authorization: Bearer …` with `tokenFile`
+- `X-VeeamAware-Signature: sha256=<hex HMAC-SHA256 of the raw body>` with `signingSecretFile`
+
+Deliveries are retried on 429 and 5xx, and one failing target never blocks the others.
 
 ## Troubleshooting
 
@@ -385,7 +436,9 @@ C:\VeeamAware\Uninstall-VeeamAware.ps1                # remove the hook from job
 C:\VeeamAware\Uninstall-VeeamAware.ps1 -RemoveFiles   # also delete C:\VeeamAware (config, secrets, state, logs)
 ```
 
-The hook is removed only where the job's post-job script runs `VeeamAware.ps1`; other scripts are left alone. Agent, file-share, tape and SureBackup jobs keep their script settings per job, so the script lists those for you to check by hand. `Register-VeeamAwareJob.ps1 -Remove` previews the hook removal without uninstalling.
+- The hook is removed only where the job's post-job script runs `VeeamAware.ps1`. Other scripts are left alone.
+- Agent, file-share, tape and SureBackup jobs keep their script settings per job, so the uninstaller lists those for you to check by hand.
+- `Register-VeeamAwareJob.ps1 -Remove` previews the hook removal without uninstalling.
 
 ## Security
 
@@ -410,6 +463,21 @@ Reports from other setups are very welcome. See [CONTRIBUTING.md](CONTRIBUTING.m
 
 The gallery images are rebuilt from made-up data with `pwsh -File .\tools\New-ReadmeImages.ps1`. It renders each card with the real renderers into `tools\card-preview.html` and screenshots it in headless Edge. Teams cards are drawn by Microsoft's Adaptive Cards renderer. The Discord layout is a close imitation, since Discord has no public renderer.
 
+## How it's made
+
+VeeamAware is built with AI assistance. Its code, tests and documentation are written with
+[Claude Code](https://claude.com/claude-code), Anthropic's coding agent, under the maintainer's direction: they
+decide what goes in and try it out on a real VBR server. Every commit says so with a `Co-Authored-By: Claude`
+trailer.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+VeeamAware is MIT-licensed, © 2026 InspireNXE. See [LICENSE](LICENSE).
+
+It runs on PowerShell 7 and Veeam's own `Veeam.Backup.PowerShell` module, both installed by VBR 13. The gallery's Teams
+cards are drawn with Microsoft's [Adaptive Cards](https://adaptivecards.io/) renderer (MIT) and the Discord emoji with
+[Twemoji](https://github.com/jdecked/twemoji) (CC-BY 4.0). Both are loaded only by `tools\card-preview.html`, never by
+VeeamAware itself.
+
+VeeamNotify is GPL-licensed. VeeamAware was written from VBR's documented interfaces and its own testing, and contains
+none of VeeamNotify's code.
