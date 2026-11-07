@@ -354,7 +354,7 @@ foreach ($dir in 'config', 'secrets', 'state', 'logs', 'plugins') {
 $credPath = Resolve-VAPath $config.vbr.credentialFile
 if ($UseRest -or $RestCredential) {
     if (-not $RestCredential) {
-        Write-VAHint 'VBR account for the REST API. A dedicated account with the "Veeam Backup Viewer" role covers job reports; malware and analyzer events may need more (see README "Data sources").'
+        Write-VAHint 'VBR account for the REST API. A dedicated account with the "Veeam Backup Viewer" role covers job reports; malware and analyzer events may need more (see docs\configuration.md, "Data sources").'
         $RestCredential = Get-Credential -Message 'VBR REST API account (DOMAIN\user or .\user)'
     }
     Save-VACredential -Credential $RestCredential -Path $credPath

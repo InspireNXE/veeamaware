@@ -2,7 +2,7 @@
 # from ConvertFrom-Json), so the installer's prompts stay thin and the editing logic is testable.
 #
 # The first Discord target named "discord" lives in the top-level "discord" block (so discord.* settings in
-# the README apply to it); every other target goes in "targets". Disabled entries (the shipped examples) are
+# docs\configuration.md apply to it); every other target goes in "targets". Disabled entries (the shipped examples) are
 # not listed, and adding a target with the same name replaces such an entry.
 
 $script:VASetupTypes = [ordered]@{

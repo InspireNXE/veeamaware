@@ -16,7 +16,7 @@ function Get-VADefaultConfig {
                 onSecurity = @()        # malware, analyzer violations, four-eyes requests
             }
         }
-        targets       = @()   # extra targets: discord | webhook (see README "Targets")
+        targets       = @()   # extra targets: discord | webhook (see docs\targets.md)
         vbr           = [ordered]@{
             dataSource           = 'auto'      # auto | rest | powershell (Community Edition: powershell)
             powershellProfile    = ''          # optional site override merged over src\Profiles\PowerShell\*.psd1
@@ -28,7 +28,7 @@ function Get-VADefaultConfig {
             timeoutSeconds       = 60
         }
         # What happens to each finished job session. Rules are checked in order; the first whose "match" fits
-        # the job decides, per result, one of: immediate | digest | both | off. See README "Routing".
+        # the job decides, per result, one of: immediate | digest | both | off. See docs\configuration.md, "Routing".
         routing       = [ordered]@{
             rules = @(
                 [ordered]@{

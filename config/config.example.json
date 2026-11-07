@@ -1,5 +1,5 @@
 {
-  "_comment": "Install-VeeamAware.ps1 copies this to config.json. Any key you leave out uses the built-in default; see README 'Configuration'.",
+  "_comment": "Install-VeeamAware.ps1 copies this to config.json. Any key you leave out uses the built-in default; see docs/configuration.md.",
   "discord": {
     "webhookUrl": "https://discord.com/api/webhooks/000000000000000000/replace-me",
     "threadId": "",
@@ -112,7 +112,7 @@
       "exclude": []
     },
     "health": {
-      "_comment": "Veeam services down, stuck sessions, watcher failures. Quiet during Veeam upgrades and Set-VeeamAwareMaintenance.ps1. See README > Server health for every key.",
+      "_comment": "Veeam services down, stuck sessions, watcher failures. Quiet during Veeam upgrades and Set-VeeamAwareMaintenance.ps1. See docs/server-health.md for every key.",
       "enabled": true,
       "firstAlertAfterMinutes": 15,
       "repeatEveryMinutes": 60,
