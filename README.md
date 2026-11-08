@@ -37,9 +37,11 @@ VeeamAware is an independent community project. It isn't affiliated with, endors
 | **Digest**: what needs attention, every job's last 7 days, storage, security | Daily at 08:00 by default ([digests](docs/configuration.md#digests)) |
 | **Repository** low on space, offline, or recovered | Within a few minutes |
 | **Malware detection** | Within a few minutes |
-| **Server health**: a Veeam service stopped, a job stuck, VBR updated. Quiet during Veeam upgrades. | Within a few minutes ([server health](docs/server-health.md)) |
+| **Server health**: a Veeam service stopped, a job stuck, the watcher failing, VBR updated. Quiet during Veeam upgrades; something that keeps going down and up sends one "flapping" card instead of every change. | Within a few minutes ([server health](docs/server-health.md)) |
 | **Security & Compliance Analyzer** findings | After each analyzer run |
 | **Four-eyes** approval requests (licensed editions) | Within a few minutes |
+
+On Discord, failures and security alerts can ping a role or person, per channel and per job ([mentions](docs/targets.md#mentions)).
 
 Click a card type to see it. Every name, address and number in these is made up.
 
@@ -254,7 +256,7 @@ What has been run against a real server so far:
 |---|---|
 | Discord, PowerShell data source, Community Edition 13.1 | In daily use |
 | Microsoft Teams | Tested: connection card, job report, digest |
-| Server health | Service outages, reminders and recovery, and a real VBR 13 upgrade from the ISO, tested live. Stuck sessions only in the offline tests. |
+| Server health | Service outages, reminders and recovery, stuck sessions, watcher failures, and a real VBR 13 upgrade from the ISO, tested live. Flapping only in the offline tests. |
 | Generic webhook | Offline tests only (payload, headers, signing) |
 | REST data source on a licensed edition | Built against the documented API, not yet tried on a licensed server |
 | VBR 13.0.x | Should work, but not yet tried on a real 13.0 server. If something is blank or wrong, attach the output of `tools\Probe-VeeamPowerShell.ps1` to an issue. |
