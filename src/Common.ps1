@@ -195,7 +195,7 @@ function Get-VAAnalyzerFinding {
         lossprotectionenabled               = 'Encryption password loss protection is off'
         containbackupcopies                 = 'No backup copy jobs (second copy of backups)'
         manuallinuxhostauthentication       = 'Linux host fingerprints are trusted automatically'
-        viproxytrafficencrypted             = 'VMware proxy traffic is not encrypted'
+        viproxytrafficencrypted             = 'VMware host-to-proxy traffic (Network mode) is not encrypted'
         csmbsigningandencryptionenabled     = 'SMB signing and encryption are off'
         webproxyautodiscoverydisabled       = 'Web Proxy Auto-Discovery (WPAD) is enabled'
         windowsscripthostdisabled           = 'Windows Script Host is enabled'

@@ -45,6 +45,18 @@ Create the webhook in Discord: channel settings → **Integrations** → **Webho
 
 Every `discord.*` setting also works on a Discord entry in `targets`, so each channel can be set up separately: `threadId`, `username`, `avatarUrl`, `mentions`, `statusBadges`, `ansiColors`. See [Common settings](configuration.md#common-settings).
 
+### Mentions
+
+Discord only notifies people loudly when they're mentioned. Each Discord target can ping on failures, warnings, successes and security alerts (malware, analyzer findings, four-eyes requests):
+
+```json
+"mentions": { "onFailure": ["<@&123456789012345678>"], "onSecurity": ["<@&123456789012345678>", "@here"] }
+```
+
+- `<@&id>` is a role, `<@id>` a user; `@here` and `@everyone` work too. To get an id, turn on Developer Mode in Discord, then right-click the role or user → **Copy ID**.
+- The installer asks for failure and security mentions when you add a Discord target. Re-run it and choose **Targets → m** to change them.
+- A routing rule can add more for its own jobs. See [Routing](configuration.md#routing).
+
 ## Microsoft Teams
 
 1. In Teams, open the channel's **⋯** menu, choose **Workflows**, then **Post to a channel when a webhook request is received**. Finish the wizard and copy the URL.

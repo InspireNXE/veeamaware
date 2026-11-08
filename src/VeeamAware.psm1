@@ -9,7 +9,7 @@ $script:VAVersion = '0.1.0'
 $script:VARepository = 'inspirenxe/veeamaware'
 $script:VARoot = Split-Path -Parent $PSScriptRoot
 
-foreach ($part in 'Common', 'Config', 'State', 'Rest', 'PSProvider', 'Source', 'Report', 'Events', 'Targets', 'Routing', 'Health', 'Update', 'Setup') {
+foreach ($part in 'Common', 'Config', 'State', 'Rest', 'PSProvider', 'Source', 'Report', 'Events', 'Targets', 'Routing', 'Health', 'Flapping', 'Update', 'Setup') {
     . (Join-Path $PSScriptRoot "$part.ps1")
 }
 

@@ -37,7 +37,7 @@ On a VBR server, `-WhatIf` on any `Invoke-*` script prints the payloads instead 
 | `src\Targets\` | Built-in targets: Discord, Teams, webhook |
 | `src\Update.ps1`, `install.ps1`, `Update-VeeamAware.ps1` | Releases and updates |
 | `tests\` | Offline test suite and mocks |
-| `tools\` | Read-only probes for new Veeam builds, sample cards and README images (`New-SampleCards.ps1`, `New-ReadmeImages.ps1`), and the badge generator |
+| `tools\` | Read-only probes for new Veeam builds, sample cards and README images (`New-SampleCards.ps1`, `New-ReadmeImages.ps1`), live alert tests (`Test-LiveAlerts.ps1`), and the badge generator |
 
 ### Guidelines
 

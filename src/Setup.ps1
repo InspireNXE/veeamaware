@@ -91,8 +91,50 @@ function Remove-VASetupTarget {
     param([Parameter(Mandatory)]$Json, [Parameter(Mandatory)][string]$Name)
     $t = @(Get-VASetupTargets $Json | Where-Object Name -eq $Name)
     if (-not $t) { throw "No target named '$Name'." }
-    if ($t[0].InBlock) { $Json.discord.webhookUrl = ''; return }
-    $Json | Add-Member targets @(@(Get-VAProp $Json 'targets' @()) | Where-Object { $_ -and "$($_.name)" -ne $Name }) -Force
+    if ($t[0].InBlock) { $Json.discord.webhookUrl = '' }
+    else { $Json | Add-Member targets @(@(Get-VAProp $Json 'targets' @()) | Where-Object { $_ -and "$($_.name)" -ne $Name }) -Force }
+    # A digest that named it would fail validation; one left with no targets goes back to all of them.
+    foreach ($d in @(Get-VAProp $Json 'digests' @() | Where-Object { $_ })) {
+        $to = @(Get-VAProp $d 'targets' @('*'))
+        if ($to -contains $Name) {
+            $rest = @($to | Where-Object { $_ -ne $Name })
+            $d | Add-Member targets $(if ($rest) { $rest } else { @('*') }) -Force
+        }
+    }
+}
+
+function Test-VAMentionText {
+    <# Discord mention strings typed in the installer: space or comma separated <@id>, <@&id>, @here, @everyone. #>
+    param([string]$Text)
+    $items = @("$Text" -split '[\s,]+' | Where-Object { $_ })
+    return (-not @($items | Where-Object { $_ -notmatch '^<@[!&]?\d+>$|^@(everyone|here)$' }).Count)
+}
+
+function Get-VASetupMentions {
+    <# A Discord target's mention list for one kind ("Failure", "Security"...). #>
+    param([Parameter(Mandatory)]$Json, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Kind)
+    $t = if ($Name -eq 'discord' -and @(Get-VASetupTargets $Json | Where-Object { $_.Name -eq 'discord' -and $_.InBlock }).Count) { Get-VAProp $Json 'discord' }
+    else { @(Get-VAProp $Json 'targets' @()) | Where-Object { $_ -and "$($_.name)" -eq $Name } | Select-Object -First 1 }
+    @(Get-VAProp $t "mentions.on$Kind" @() | Where-Object { $_ })
+}
+
+function Set-VASetupMentions {
+    <# Sets a Discord target's mention list for the given kinds (top-level discord block or a targets entry). #>
+    param([Parameter(Mandatory)]$Json, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string[]]$Kinds, [string[]]$Mentions = @())
+    $t = @(Get-VASetupTargets $Json | Where-Object Name -eq $Name)
+    if (-not $t) { throw "No target named '$Name'." }
+    if ($t[0].Type -ne 'discord') { throw "Mentions are Discord only; '$Name' is $($t[0].Type)." }
+    $o = if ($t[0].InBlock) { $Json.discord } else { @($Json.targets | Where-Object { $_ -and "$($_.name)" -eq $Name })[0] }
+    if (-not (Get-VAProp $o 'mentions') -or $o.mentions -isnot [System.Management.Automation.PSCustomObject]) { $o | Add-Member mentions ([pscustomobject]@{}) -Force }
+    foreach ($k in $Kinds) { $o.mentions | Add-Member "on$k" @($Mentions | Where-Object { $_ }) -Force }
+}
+
+function Set-VASetupDigestTargets {
+    <# Points a digest at some targets by name; none or all of them = "*". #>
+    param([Parameter(Mandatory)]$Digest, [string[]]$Names = @(), [string[]]$All = @())
+    $pick = @($Names | Where-Object { $_ } | Select-Object -Unique)
+    $value = if (-not $pick.Count -or ($All.Count -and -not @($All | Where-Object { $pick -notcontains $_ }).Count)) { @('*') } else { $pick }
+    $Digest | Add-Member targets $value -Force
 }
 
 function ConvertFrom-VATargetSpec {
@@ -203,7 +245,8 @@ function Get-VASetupSummary {
     $d = @(Get-VASetupValue $Json 'digests' @()) | Select-Object -First 1
     $digest = if (-not $d) { 'none' } elseif (-not (Get-VAProp $d 'enabled' $true)) { "'$($d.name)' off" } else {
         $when = if ("$(Get-VAProp $d 'schedule.every' 'day')" -eq 'week') { "$(Get-VAProp $d 'schedule.day' 'Monday')s" } else { 'daily' }
-        "'$($d.name)' $when at $(Get-VAProp $d 'schedule.at' '08:00')"
+        $to = @(Get-VAProp $d 'targets' @('*'))
+        "'$($d.name)' $when at $(Get-VAProp $d 'schedule.at' '08:00')$(if ($to -notcontains '*' -and $targets.Count -gt 1) { " to $($to -join ', ')" })"
     }
     $agent = Get-VASetupAgentMode $Json
     [ordered]@{

@@ -38,8 +38,15 @@ $health = $state.health
 $quiet = [pscustomobject]@{ Quiet = $false; Upgrading = $false; Reason = $null; Events = @() }
 $servicesDown = $false
 
+$flapSettings = Get-VAFlapSettings $config
+$flaps = $state.flapping
+
 function Send-WatchEvent($Evt) {
-    $script:sent += Send-VAEvent -Config $config -Event $Evt -WhatIf:$WhatIf
+    # Something that keeps going wrong and coming back gets one "flapping" card instead of every change.
+    foreach ($e in @(Invoke-VAFlapGate -Event $Evt -Flaps $flaps -Settings $flapSettings -Now $now)) {
+        if ($e -ne $Evt) { Write-VALog "Flapping: $($e.title)" -Level Warning }
+        $script:sent += Send-VAEvent -Config $config -Event $e -WhatIf:$WhatIf
+    }
 }
 
 function Send-HealthEvents([object[]]$Events, [string]$AlertedKey) {
@@ -74,12 +81,18 @@ if ($hs.enabled) {
 # first run after (lastWatchUtc stays put, so nothing in between is missed).
 if ($quiet.Upgrading) {
     Write-VALog 'Veeam upgrade in progress: skipping the VBR checks and digests this run'
-    if ($hs.enabled -and -not $WhatIf) { Save-VAHealthState $health }
+    if (-not $WhatIf) {
+        if ($hs.enabled) { Save-VAHealthState $health }
+        Update-VAState { param($s) $s.flapping = $flaps } | Out-Null
+    }
     Write-VALog "Watch pass complete: $script:sent delivery(ies) (upgrade in progress, VBR checks skipped)"
     return
 }
 
 try {
+    # tools\Test-LiveAlerts.ps1 -Watcher creates this file to try the watcher-failure alert for real.
+    $simulate = Resolve-VAPath 'state\test-watcher-failure'
+    if (Test-Path -LiteralPath $simulate) { throw "Test failure (tools\Test-LiveAlerts.ps1 -Watcher). Run it with -Stop to end the test." }
     Connect-VASource -Config $config
 
     # ---- Sessions no hook reported (and, from the same list, sessions that appear stuck) ----------------
@@ -200,6 +213,10 @@ try {
     }
 
     if ($hs.enabled) { Send-HealthEvents (Update-VAWatcherHealth -Settings $hs.watcher -Health $health -Now $now -Timing (Get-VAHealthTiming $hs 'watcher')).Events }
+    foreach ($e in @(Get-VAFlapSettledEvents -Flaps $flaps -Settings $flapSettings -Now $now)) {
+        Write-VALog "Flapping settled: $($e.title)"
+        $script:sent += Send-VAEvent -Config $config -Event $e -WhatIf:$WhatIf
+    }
     if (-not $WhatIf) {
         if ($hs.enabled) { Save-VAHealthState $health }
         Update-VAState { param($s) $s.lastWatchUtc = $now.ToString('o') } | Out-Null
@@ -224,6 +241,10 @@ catch {
 }
 finally {
     Disconnect-VASource
+    if (-not $WhatIf) {
+        try { Update-VAState { param($s) $s.flapping = $flaps } | Out-Null }
+        catch { Write-VALog "Could not save the flapping state: $($_.Exception.Message)" -Level Warning }
+    }
 }
 
 # ---- Digests: a separate process, only when one is due or still needs its first baseline -----------------

@@ -16,6 +16,15 @@ Three timings apply to every check. They live under `watch.health`, and any chec
 | `repeatEveryMinutes` | `60` | How often to remind you while it lasts. `0` alerts once. |
 | `backUpForMinutes` | `5` | How long a service must run again before "running again" is sent. |
 
+## Flapping
+
+Something that keeps going wrong and coming back, like a service that crashes every half hour or a repository hovering on a free-space threshold, would otherwise send a card every time it changes. Instead:
+
+- After 4 changes (alerts or recoveries; reminders don't count) within 60 minutes, one **Flapping** card goes out and further cards for it are held.
+- Once it has stayed the same for 30 minutes, one **Settled** card says how it ended up: OK, or still a problem.
+
+This covers services, the watcher and repositories. Settings under `watch.flapping`: `enabled`, `changes`, `withinMinutes`, `settleMinutes`.
+
 ## What is checked
 
 | Check | Alerts when | Settings (`watch.health.…`) |
@@ -73,3 +82,11 @@ C:\VeeamAware\Set-VeeamAwareMaintenance.ps1          # show the current state
 ```
 
 To see every health card without waiting for a real outage, run `tools\Send-HealthPreview.ps1`. It posts samples titled `[Preview]` and changes nothing.
+
+To try the stuck-job and watcher alerts for real, end to end:
+
+```powershell
+pwsh -File C:\VeeamAware\tools\Test-LiveAlerts.ps1 -Stuck 'Some Job'   # that job counts as stuck after 3 minutes; start it in VBR
+pwsh -File C:\VeeamAware\tools\Test-LiveAlerts.ps1 -Watcher            # every watcher run fails until -Stop
+pwsh -File C:\VeeamAware\tools\Test-LiveAlerts.ps1 -Stop               # put everything back
+```

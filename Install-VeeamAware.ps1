@@ -160,7 +160,24 @@ function Read-NewTarget {
     }
     $added = Add-VASetupTarget -Json $json -Type $type -Name $name -Url $url -MinSeverity $sev -Options $options
     Write-VADone "Added '$added'."
+    if ($type -eq 'discord') { Edit-Mentions $added }
     return $added
+}
+
+function Edit-Mentions([string]$Name) {
+    <# Who a Discord target pings on failures and security alerts (malware, analyzer, four-eyes). #>
+    Write-VAHint 'Discord only notifies loudly when someone is mentioned. Paste a role (<@&id>), a user (<@id>), @here or @everyone; several are fine. Get an id with Developer Mode on: right-click the role or user → Copy ID. "-" clears.'
+    foreach ($k in @(@{ Kind = 'Failure'; Prompt = 'Ping on failures' }, @{ Kind = 'Security'; Prompt = 'Ping on security alerts' })) {
+        $cur = (Get-VASetupMentions -Json $json -Name $Name -Kind $k.Kind) -join ' '
+        while ($true) {
+            $a = Read-VAInput $k.Prompt $cur 'blank = keep'
+            if (-not $a) { $a = $cur }
+            if ($a -eq '-') { $a = '' }
+            if (Test-VAMentionText $a) { break }
+            Write-VAWarn 'Use <@123…> for a user, <@&123…> for a role, @here or @everyone.'
+        }
+        Set-VASetupMentions -Json $json -Name $Name -Kinds $k.Kind -Mentions @($a -split '[\s,]+' | Where-Object { $_ })
+    }
 }
 
 function Edit-Targets {
@@ -172,13 +189,22 @@ function Edit-Targets {
         Write-Host ''
         if (-not $list) { $choice = Read-Choice 'Add a target now' @('y', 'n') 'y' 'n = set up later; y/n' }
         else {
+            $discords = @($list | Where-Object Type -eq 'discord')
             Write-VAOption 'a' 'add another'
             Write-VAOption 'r' 'remove one'
+            if ($discords) { Write-VAOption 'm' 'who a Discord target pings' }
             Write-VAOption 'd' 'done'
-            $choice = Read-Choice 'Choice' @('a', 'r', 'd') 'd'
+            $choice = Read-Choice 'Choice' (@('a', 'r', 'd') + @(if ($discords) { 'm' })) 'd'
         }
         if ($choice -in 'n', 'd') { return }
         if ($choice -in 'y', 'a') { Read-NewTarget | Out-Null; continue }
+        if ($choice -eq 'm') {
+            $pick = if ($discords.Count -eq 1) { $discords[0].Name } else {
+                $n = Read-Choice 'Which number' @(1..$list.Count | Where-Object { $list[$_ - 1].Type -eq 'discord' } | ForEach-Object { "$_" }) ''
+                $list[[int]$n - 1].Name
+            }
+            Edit-Mentions $pick; continue
+        }
         $n = Read-Choice 'Remove which number' @(1..$list.Count | ForEach-Object { "$_" }) ''
         Remove-VASetupTarget -Json $json -Name $list[[int]$n - 1].Name
         Write-VADone "Removed '$($list[[int]$n - 1].Name)'."
@@ -229,6 +255,28 @@ function Edit-Digest {
     }
     $at = Read-Text 'At' "$(Get-VAProp $d 'schedule.at' '08:00')" '^([01]\d|2[0-3]):[0-5]\d$' 'Use 24-hour HH:mm, e.g. 08:00' 'HH:mm, server time'
     $d.schedule | Add-Member at $at -Force
+
+    # Which targets get it (only worth asking with more than one).
+    $list = @(Get-VASetupTargets $json)
+    if ($list.Count -gt 1) {
+        $names = @($list | ForEach-Object Name)
+        $cur = @(Get-VAProp $d 'targets' @('*'))
+        Write-Host ''
+        for ($i = 0; $i -lt $list.Count; $i++) {
+            Write-VAOption ($i + 1) "$($list[$i].Name) ($($list[$i].Type))" -Current:($cur -contains '*' -or $cur -contains $list[$i].Name)
+        }
+        $default = if ($cur -contains '*') { 'all' } else { (@(for ($i = 0; $i -lt $list.Count; $i++) { if ($cur -contains $names[$i]) { $i + 1 } })) -join ',' }
+        while ($true) {
+            $a = Read-VAInput 'Send it to' $default 'numbers like 1,3, or all'
+            if (-not $a) { $a = $default }
+            if ($a -eq 'all') { Set-VASetupDigestTargets -Digest $d; break }
+            $nums = @($a -split '[\s,]+' | Where-Object { $_ })
+            if ($nums.Count -and -not @($nums | Where-Object { $_ -notmatch '^\d+$' -or [int]$_ -lt 1 -or [int]$_ -gt $list.Count }).Count) {
+                Set-VASetupDigestTargets -Digest $d -Names @($nums | ForEach-Object { $names[[int]$_ - 1] }) -All $names; break
+            }
+            Write-VAWarn "Numbers from 1 to $($list.Count), separated by commas, or all."
+        }
+    }
 }
 
 function Edit-Agents {

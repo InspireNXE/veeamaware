@@ -20,6 +20,7 @@ function New-VAState {
         repositorySpace   = [ordered]@{}   # repository id -> daily readings [{ d: yyyy-MM-dd, free: GB, cap: GB }]
         digestAnalyzer    = [ordered]@{}   # digest name -> analyzer violation count at its last run
         health            = New-VAHealthState   # see Health.ps1
+        flapping          = [ordered]@{}   # fingerprint -> recent changes and flapping status (see Flapping.ps1)
     }
 }
 
@@ -47,7 +48,14 @@ function Read-VAState {
     }
     if ($null -eq $state.repositoryLevels) { $state.repositoryLevels = [ordered]@{} }
     if ($null -eq $state.digests) { $state.digests = [ordered]@{} }
-    foreach ($k in 'repositorySpace', 'digestAnalyzer') { if ($null -eq $state[$k]) { $state[$k] = [ordered]@{} } }
+    foreach ($k in 'repositorySpace', 'digestAnalyzer', 'flapping') { if ($state[$k] -isnot [System.Collections.IDictionary]) { $state[$k] = [ordered]@{} } }
+    foreach ($fp in @($state.flapping.Keys)) {
+        $f = $state.flapping[$fp]
+        if ($f -isnot [System.Collections.IDictionary]) { $state.flapping.Remove($fp); continue }
+        $f['changes'] = @($f['changes'] | Where-Object { $_ } | ForEach-Object { ConvertTo-VAIsoString $_ })
+        $f['since'] = ConvertTo-VAIsoString $f['since']
+        $f['flapping'] = [bool]$f['flapping']
+    }
     foreach ($id in @($state.repositorySpace.Keys)) {
         foreach ($r in @($state.repositorySpace[$id])) { if ($r -and $r['d'] -is [datetime]) { $r['d'] = $r['d'].ToString('yyyy-MM-dd') } }
     }

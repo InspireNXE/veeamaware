@@ -59,7 +59,7 @@ function ConvertTo-VAEventJson {
     <# Public JSON form of an event (drops internal routing hints). #>
     param([Parameter(Mandatory)]$Event)
     $copy = [ordered]@{}
-    foreach ($k in $Event.Keys) { if ($k -ne 'mention') { $copy[$k] = $Event[$k] } }
+    foreach ($k in $Event.Keys) { if ($k -notin 'mention', 'mentionExtra') { $copy[$k] = $Event[$k] } }
     return ($copy | ConvertTo-Json -Depth 12 -Compress)
 }
 
@@ -122,9 +122,14 @@ function New-VASessionEvent {
         logIssues = @($s.ProblemLog | ForEach-Object { [ordered]@{ status = $_.Status; title = $_.Title } })
     }
     $key = if ($s.JobId -and $s.JobId -ne '00000000-0000-0000-0000-000000000000') { $s.JobId } else { $s.Name }
-    New-VAEvent -Kind session -Severity $severity -Status $s.Result -Title "$($s.Name): $($s.Result)" -Text $text -Markdown $md.ToString() `
+    $mention = Get-VAMentionKind $s.Result
+    $route = Get-VARoute -Config $Config -JobName "$($s.Name)" -SessionType "$($s.Type)" -Result "$($s.Result)"
+    $extra = if ($mention -and $route.Mentions) { @(Get-VAProp $route.Mentions "on$mention" @()) | Where-Object { $_ } } else { @() }
+    $evt = New-VAEvent -Kind session -Severity $severity -Status $s.Result -Title "$($s.Name): $($s.Result)" -Text $text -Markdown $md.ToString() `
         -Fingerprint (Get-VAFingerprint 'job' $key) -Resolved:($severity -eq 'success') -Deferred:$Deferred -OccurredAt $s.End `
-        -Details $details -Report (New-VASessionReport -Config $Config -Summary $s) -Mention (Get-VAMentionKind $s.Result)
+        -Details $details -Report (New-VASessionReport -Config $Config -Summary $s) -Mention $mention
+    $evt.mentionExtra = @($extra)   # the routing rule's own mentions (Discord adds them to the target's)
+    $evt
 }
 
 function New-VAMalwareAlertEvent {

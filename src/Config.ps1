@@ -76,6 +76,15 @@ function Get-VADefaultConfig {
                 notifyRecovery        = $true
                 exclude               = @()
             }
+            # Something that keeps going wrong and coming back (services, watcher, repositories): after
+            # "changes" alerts/recoveries within withinMinutes, one "flapping" card instead of each change, then
+            # one "settled" card once it has stayed the same for settleMinutes. See src\Flapping.ps1.
+            flapping             = [ordered]@{
+                enabled       = $true
+                changes       = 4
+                withinMinutes = 60
+                settleMinutes = 30
+            }
             # Server health (src\Health.ps1). Quiet while Veeam is upgrading or maintenance mode is on.
             # Alert timing (see src\Health.ps1); each check can override any of the three.
             health               = [ordered]@{

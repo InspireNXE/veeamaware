@@ -11,6 +11,8 @@
 #   jobTypes  session types, e.g. ["AgentBackup", "BackupCopyJob"] or friendly
 #             names like "Agent Backup"                                         (default: any type)
 #   exclude   job-name wildcards this rule must not apply to
+# A rule can also add Discord mentions for its jobs, on top of each Discord target's own:
+#   mentions  { "onFailure": ["<@&role>"], "onWarning": [], "onSuccess": [] }
 # A session no rule matches is reported immediately.
 
 $script:VARouteModes = @('immediate', 'digest', 'both', 'off')
@@ -46,9 +48,9 @@ function Get-VARoute {
         if (-not $rule) { continue }
         if (-not (Test-VAJobMatch (Get-VAProp $rule 'match' @{}) $JobName $SessionType)) { continue }
         $mode = "$(Get-VAProp $rule $key 'immediate')".ToLowerInvariant()
-        return @{ Mode = $mode; Rule = "$(Get-VAProp $rule 'name' "rule $i")" }
+        return @{ Mode = $mode; Rule = "$(Get-VAProp $rule 'name' "rule $i")"; Mentions = Get-VAProp $rule 'mentions' }
     }
-    return @{ Mode = 'immediate'; Rule = 'default' }
+    return @{ Mode = 'immediate'; Rule = 'default'; Mentions = $null }
 }
 
 function Test-VAReportableSession {

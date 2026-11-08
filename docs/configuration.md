@@ -55,6 +55,15 @@ Routing decides, per job, whether a finished session is reported right away, sav
 - `jobTypes`: e.g. `BackupJob`, `BackupCopyJob`, `ReplicaJob`, `AgentBackup`, `AgentPolicy`
 - `exclude`: job names to skip
 
+A rule can also ping people on Discord for its jobs, on top of what each Discord target pings anyway (see [Mentions](targets.md#mentions)):
+
+```json
+{ "name": "SQL: the DBA team hears about failures",
+  "match": { "jobs": ["SQL-*"] },
+  "success": "immediate", "warning": "immediate", "failure": "immediate",
+  "mentions": { "onFailure": ["<@&123456789012345678>"], "onWarning": [] } }
+```
+
 ## Digests
 
 Each entry in `digests` is a separate summary with its own schedule, jobs, sections and targets. The installer sets up one called `daily`.
@@ -71,7 +80,7 @@ Each entry in `digests` is a separate summary with its own schedule, jobs, secti
 | Key | Notes |
 |---|---|
 | `schedule` | `every`: `day` or `week` (then also `day`), and `at` (local time, HH:mm) |
-| `targets` | Target names, or `*` for all |
+| `targets` | Target names, or `*` for all. The installer asks for this when you have more than one target. |
 | `jobs` | `include`, `exclude`, `jobTypes`, same as routing `match` |
 | `content` | `all` (every session) or `routed` (only sessions routed to `digest` or `both`) |
 | `sections` | Any of `agents`, `jobs`, `repositories`, `security` |

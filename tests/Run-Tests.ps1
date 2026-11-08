@@ -146,6 +146,18 @@ It 'rejects a bad webhook and remote server with skipCertificateCheck' {
 }
 It 'example config is valid' { Get-VAConfig -Path (Join-Path $root 'config\config.example.json') | Out-Null }
 It 'only real mention strings are used' { Assert-Eq (Get-VAMentionContent $config 'Failure') '<@111111111111111111>' }
+It 'routing rules add their own mentions' {
+    $c = New-MockConfig
+    $c.routing.rules = @([ordered]@{ name = 'sql'; match = [ordered]@{ jobs = @('SQL*') }; success = 'immediate'; warning = 'immediate'; failure = 'immediate'
+            mentions = [ordered]@{ onFailure = @('<@&222222222222222222>', 'not-a-mention') } })
+    $sum = Get-VASessionSummary -Session (New-MockSession -Name 'SQL-01' -Result 'Failed') -TaskSessions @()
+    $e = New-VASessionEvent -Config $c -Summary $sum
+    Assert-Eq (@($e.mentionExtra) -join ',') '<@&222222222222222222>,not-a-mention'
+    Assert-Eq (Get-VAMentionContent $config 'Failure' -Extra $e.mentionExtra) '<@111111111111111111> <@&222222222222222222>'
+    Assert ((ConvertTo-VAEventJson $e) -notmatch 'mentionExtra') 'internal field stays out of the webhook body'
+    $ok = New-VASessionEvent -Config $c -Summary (Get-VASessionSummary -Session (New-MockSession -Name 'SQL-01' -Result 'Success') -TaskSessions @())
+    Assert-Eq @($ok.mentionExtra).Count 0
+}
 
 Write-Host 'Credential + state'
 It 'round-trips the DPAPI credential' {
@@ -748,6 +760,28 @@ It 'removes targets from the block and from the list' {
     Remove-VASetupTarget -Json $j -Name discord; Remove-VASetupTarget -Json $j -Name teams
     Assert-Eq @(Get-VASetupTargets $j).Count 0
 }
+It 'sets Discord mentions and digest targets from the installer' {
+    $j = & $exampleJson; $j.discord.webhookUrl = ''
+    Add-VASetupTarget -Json $j -Type discord -Url 'https://discord.com/api/webhooks/1/aaa' | Out-Null
+    Add-VASetupTarget -Json $j -Type discord -Url 'https://discord.com/api/webhooks/2/bbb' | Out-Null
+    Add-VASetupTarget -Json $j -Type teams -Url 'https://prod.logic.azure.com/workflows/x' | Out-Null
+    Assert (Test-VAMentionText '<@&123> @here, <@456>') 'valid mentions'
+    Assert (-not (Test-VAMentionText '@ops')) 'plain names are not mentions'
+    Set-VASetupMentions -Json $j -Name discord -Kinds Failure, Security -Mentions @('<@&123>')
+    Set-VASetupMentions -Json $j -Name discord-2 -Kinds Failure -Mentions @('@here')
+    Assert-Eq ((Get-VASetupMentions $j discord Security) -join ',') '<@&123>'
+    Assert-Eq ((Get-VASetupMentions $j discord-2 Failure) -join ',') '@here'
+    $threw = $false; try { Set-VASetupMentions -Json $j -Name teams -Kinds Failure -Mentions @('@here') } catch { $threw = $true }
+    Assert $threw 'teams has no mentions'
+    $d = Get-VASetupDigest $j
+    Set-VASetupDigestTargets -Digest $d -Names @('discord-2', 'teams') -All @('discord', 'discord-2', 'teams')
+    Assert-Eq (@($d.targets) -join ',') 'discord-2,teams'
+    Set-VASetupDigestTargets -Digest $d -Names @('discord', 'discord-2', 'teams') -All @('discord', 'discord-2', 'teams')
+    Assert-Eq (@($d.targets) -join ',') '*'
+    Set-VASetupDigestTargets -Digest $d -Names @('teams') -All @('discord', 'discord-2', 'teams')
+    Remove-VASetupTarget -Json $j -Name teams
+    Assert-Eq (@($d.targets) -join ',') '*'   # its only target was removed: back to all
+}
 It 'reads -Target specs' {
     $t = ConvertFrom-VATargetSpec 'teams:ops@warning=https://x.example/y'
     Assert-Eq "$($t.Type)|$($t.Name)|$($t.MinSeverity)|$($t.Url)" 'teams|ops|warning|https://x.example/y'
@@ -1093,6 +1127,55 @@ It 'watcher failures alert after three in a row, once, and recover' {
     Assert-Eq "$($r.Events.Count)|$($r.Events[0].resolved)" '1|True'
     Assert-Eq $h.watchFailures 0
     Assert-Eq (Update-VAWatcherHealth $wc $h $t0.AddMinutes(30)).Events.Count 0
+}
+It 'flapping: one card instead of every change, then one when it settles' {
+    $f0 = [datetimeoffset]::new(2026, 11, 6, 10, 0, 0, [timespan]::Zero)
+    $fs = Get-VAFlapSettings (New-MockConfig)
+    Assert-Eq "$($fs.Changes)|$($fs.Within)|$($fs.Settle)" '4|60|30'
+    $flaps = [ordered]@{}
+    $svc = [pscustomobject]@{ Name = 'VeeamBackupSvc'; DisplayName = 'Veeam Backup Service'; Status = 'Stopped'; StartType = 'Automatic' }
+    $down = { New-VAServiceAlertEvent -Down @($svc) -New @($svc) -Since @{ VeeamBackupSvc = (Get-VAIso $f0) } -Now $f0 }
+    $up = { New-VAServiceAlertEvent -Recovered @('VeeamBackupSvc') -Services @($svc) -OutageSince (Get-VAIso $f0) -Now $f0 }
+    $sent = @()
+    for ($i = 0; $i -lt 8; $i++) {
+        $e = if ($i % 2) { & $up } else { & $down }
+        $sent += @(Invoke-VAFlapGate -Event $e -Flaps $flaps -Settings $fs -Now $f0.AddMinutes($i * 5))
+    }
+    # down, up, down pass; the 4th change becomes the flapping card; the rest are held
+    Assert-Eq $sent.Count 4
+    Assert-Eq "$($sent[3].status)|$($sent[3].report.label)" 'Flapping|FLAPPING'
+    Assert-Eq @($sent | Where-Object { $_.status -eq 'Flapping' }).Count 1
+    $fp = $sent[0].fingerprint
+    Assert $flaps[$fp].flapping 'marked flapping'
+    # a reminder while flapping is held too
+    $rem = New-VAServiceAlertEvent -Down @($svc) -Since @{ VeeamBackupSvc = (Get-VAIso $f0) } -Reminder 1 -Now $f0
+    Assert-Eq @(Invoke-VAFlapGate -Event $rem -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(40)).Count 0
+    # not yet settled 20 min after the last change (35 min)...
+    Assert-Eq @(Get-VAFlapSettledEvents -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(55)).Count 0
+    # the reminder says it's down again, so settling now would report a problem; it comes back up at 41 min
+    Assert-Eq @(Invoke-VAFlapGate -Event (& $up) -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(41)).Count 0
+    Assert-Eq @(Get-VAFlapSettledEvents -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(66)).Count 0
+    # ...settled 30 min after that last change, and it ended up running: settled OK
+    $s = @(Get-VAFlapSettledEvents -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(72))
+    Assert-Eq "$($s.Count)|$($s[0].resolved)|$($s[0].report.label)" '1|True|SETTLED · OK'
+    Assert (-not $flaps.Contains($fp)) 'entry cleared'
+    # one that ends up down settles as a problem
+    $flaps2 = [ordered]@{}
+    for ($i = 0; $i -lt 5; $i++) { $null = Invoke-VAFlapGate -Event $(if ($i % 2) { & $up } else { & $down }) -Flaps $flaps2 -Settings $fs -Now $f0.AddMinutes($i) }
+    $s = @(Get-VAFlapSettledEvents -Flaps $flaps2 -Settings $fs -Now $f0.AddMinutes(40))
+    Assert-Eq "$($s[0].resolved)|$($s[0].severity)|$($s[0].report.label)" 'False|critical|SETTLED · STILL A PROBLEM'
+    # stuck sessions and other kinds pass straight through
+    $other = New-VAEvent -Kind session -Severity critical -Title 'x' -Fingerprint 'job|1'
+    Assert-Eq @(Invoke-VAFlapGate -Event $other -Flaps $flaps -Settings $fs -Now $f0).Count 1
+    # disabled: everything passes
+    $off = [pscustomobject]@{ Enabled = $false; Changes = 1; Within = 60; Settle = 30 }
+    Assert-Eq @(Invoke-VAFlapGate -Event (& $down) -Flaps ([ordered]@{}) -Settings $off -Now $f0).Count 1
+}
+It 'flapping state survives a save and reload' {
+    $p = Join-Path $tmp 'flap-state.json'; Set-VAStatePath $p
+    Update-VAState { param($s) $s.flapping['health|services'] = [ordered]@{ changes = @('2026-11-06T10:00:00Z'); flapping = $true; since = '2026-11-06T10:00:00Z'; last = [ordered]@{ title = 't'; resolved = $false } } } | Out-Null
+    $f = (Read-VAState).flapping['health|services']
+    Assert-Eq "$($f['changes'][0])|$($f['flapping'])|$($f['since'])" '2026-11-06T10:00:00Z|True|2026-11-06T10:00:00Z'
 }
 It 'health state survives a save and reload' {
     $p = Join-Path $tmp 'health-state.json'; Set-VAStatePath $p

@@ -357,8 +357,10 @@ function New-VADigestEmbeds {
 # ---- Delivery -----------------------------------------------------------------------------------------------
 
 function Get-VAMentionContent {
-    param($Config, [ValidateSet('Failure', 'Warning', 'Success', 'Security')][string]$Kind)
-    $list = @(Get-VAProp $Config "discord.mentions.on$Kind" @()) | Where-Object { $_ -match '^<@[!&]?\d+>$|^@(everyone|here)$' }
+    <# The target's mention list for this kind plus any extra (a routing rule's), valid and de-duplicated. #>
+    param($Config, [ValidateSet('Failure', 'Warning', 'Success', 'Security')][string]$Kind, [string[]]$Extra = @())
+    $list = @(@(Get-VAProp $Config "discord.mentions.on$Kind" @()) + @($Extra)) |
+        Where-Object { "$_" -match '^<@[!&]?\d+>$|^@(everyone|here)$' } | Select-Object -Unique
     return ($list -join ' ')
 }
 
@@ -484,7 +486,8 @@ function Send-VADiscordEvent {
     $badges = [bool](Get-VATargetOption $Target 'statusBadges' (Get-VAProp $cfg 'discord.statusBadges' $true))
     $embeds = ConvertTo-VADiscordEmbeds -Report $Event.report -Ansi $ansi -Badges $badges
     $t = @{ discord = $Target }
-    $content = if ($Event.mention) { Get-VAMentionContent $t $Event.mention } else { '' }
+    $extra = if ($Event.Contains('mentionExtra')) { @($Event.mentionExtra) } else { @() }
+    $content = if ($Event.mention) { Get-VAMentionContent $t $Event.mention -Extra $extra } else { '' }
     Send-VADiscord -Config $t -Embeds $embeds -Content $content -WhatIf:([bool]($Context -and $Context.WhatIf))
 }
 
