@@ -171,8 +171,11 @@ try {
                 $known = @($state.analyzerViolations)
                 $newV = @($violations | Where-Object { $known -notcontains (& $key $_) })
                 $cleared = $violations.Count -eq 0 -and $known.Count -gt 0
-                if (-not $firstRun -and ($newV.Count -or $cleared)) {
-                    Send-WatchEvent (New-VAAnalyzerAlertEvent -NewViolations $newV -AllViolations $violations -LastRun $lastRun)
+                # No earlier result on record (it wasn't readable on the first pass): report what's open, not "new".
+                $allOpen = -not "$($state.analyzerRunId)"
+                if ($firstRun) { Write-VALog "First run: recording $($violations.Count) open analyzer finding(s) without sending" }
+                elseif ($newV.Count -or $cleared) {
+                    Send-WatchEvent (New-VAAnalyzerAlertEvent -NewViolations $newV -AllViolations $violations -LastRun $lastRun -AllOpen:$allOpen)
                 }
                 if (-not $WhatIf) {
                     $ids = @($violations | ForEach-Object { & $key $_ })

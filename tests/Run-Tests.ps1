@@ -364,6 +364,18 @@ It 'analyzer and four-eyes embeds' {
     $e2 = New-VAAuthorizationEmbed ([pscustomobject]@{ id = 'r1'; name = 'Delete backup'; state = 'Pending'; initiatedBy = 'CORP\\alice'; creationTime = [datetimeoffset]::UtcNow.ToString('o') })
     Assert-DiscordLimits @($e1, $e2) | Out-Null
 }
+It 'analyzer findings read as plain problems' {
+    Assert-Eq (Get-VAAnalyzerFinding ([pscustomobject]@{ id = 'FirewallEnabled'; bestPractice = 'Firewall Enabled' })) 'Windows Firewall is off'
+    Assert-Eq (Get-VAAnalyzerFinding ([pscustomobject]@{ id = 'x'; bestPractice = 'LLMNR disabled' })) 'LLMNR is enabled'
+    Assert-Eq (Get-VAAnalyzerFinding ([pscustomobject]@{ id = 'OsMfaTlsCheckRequired' })) 'Not met: OS MFA TLS Check Required'
+    Assert-Eq (Get-VAAnalyzerFinding ([pscustomobject]@{ id = 'NewCheck'; bestPractice = 'Some new check' })) 'Not met: Some new check'
+    $v = @([pscustomobject]@{ id = 'NetBiosDisabled'; bestPractice = 'Net Bios Disabled'; status = 'Violation' })
+    $open = New-VAAnalyzerReport -NewViolations $v -TotalViolations 1 -LastRun $null -AllOpen
+    Assert ($open.label -eq '1 OPEN FINDING') "label: $($open.label)"
+    Assert ((New-VAAnalyzerReport -NewViolations $v -TotalViolations 4 -LastRun $null).label -eq '1 NEW FINDING') 'new label'
+    $evt = New-VAAnalyzerAlertEvent -NewViolations $v -AllViolations $v -LastRun $null -AllOpen
+    Assert ($evt.markdown -notmatch '\(new\)') 'all-open event marks nothing as new'
+}
 
 Write-Host 'Digest'
 It 'builds a digest with agents, jobs, repos and malware' {

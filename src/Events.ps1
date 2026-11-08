@@ -161,9 +161,9 @@ function New-VARepositoryAlertEvent {
 }
 
 function New-VAAnalyzerAlertEvent {
-    param([object[]]$NewViolations, [object[]]$AllViolations, $LastRun)
-    $names = @($AllViolations | ForEach-Object { "$(Get-VAProp $_ 'bestPractice' (Get-VAProp $_ 'name' 'Unnamed check'))" })
-    $newNames = @($NewViolations | ForEach-Object { "$(Get-VAProp $_ 'bestPractice' (Get-VAProp $_ 'name' 'Unnamed check'))" })
+    param([object[]]$NewViolations, [object[]]$AllViolations, $LastRun, [switch]$AllOpen)
+    $names = @($AllViolations | ForEach-Object { Get-VAAnalyzerFinding $_ })
+    $newNames = if ($AllOpen) { @() } else { @($NewViolations | ForEach-Object { Get-VAAnalyzerFinding $_ }) }
     $resolved = $names.Count -eq 0
     $md = if ($resolved) { "The latest Security & Compliance Analyzer run on $env:COMPUTERNAME reports no violations." }
     else { "Security & Compliance Analyzer on $env:COMPUTERNAME reports **$($names.Count)** violation(s).`n`n" + (($names | ForEach-Object { $mark = if ($newNames -contains $_) { ' *(new)*' } else { '' }; "- $_$mark" }) -join "`n") }
@@ -171,7 +171,7 @@ function New-VAAnalyzerAlertEvent {
         -Title $(if ($resolved) { 'Security & Compliance Analyzer: all checks passing' } else { "Security & Compliance Analyzer: $($names.Count) violation(s)" }) `
         -Text $(if ($resolved) { 'No analyzer violations.' } else { 'Violations: ' + ($names -join '; ') }) -Markdown $md `
         -Fingerprint (Get-VAFingerprint 'analyzer' 'best-practices') -Resolved:$resolved -Mention $(if ($resolved) { '' } else { 'Security' }) `
-        -Report $(if ($NewViolations) { New-VAAnalyzerReport -NewViolations $NewViolations -TotalViolations $names.Count -LastRun $LastRun }) `
+        -Report $(if ($NewViolations) { New-VAAnalyzerReport -NewViolations $NewViolations -TotalViolations $names.Count -LastRun $LastRun -AllOpen:$AllOpen }) `
         -Details ([ordered]@{ violations = $names; newViolations = $newNames; runEndedAt = "$(Get-VAProp $LastRun 'endTime')" })
 }
 

@@ -177,6 +177,50 @@ function Get-VAFriendlyType {
     return ([regex]::Replace($SessionType, '(?<=[a-z])(?=[A-Z])', ' '))
 }
 
+function Get-VAAnalyzerFinding {
+    <#
+    Plain wording for a Security & Compliance Analyzer check that isn't met. VBR names each check after the
+    state it wants ("FirewallEnabled"), so a bare name next to a cross reads backwards; this says what's wrong
+    ("Windows Firewall is off"). Matches the PowerShell type name or the REST display name. Unknown checks get
+    "Not met: <name>".
+    #>
+    param($Practice)
+    $map = @{
+        remotedesktopservicedisabled        = 'Remote Desktop (RDP) is enabled'
+        remoteregistrydisabled              = 'Remote Registry service is running'
+        winrmservicedisabled                = 'WinRM (Windows Remote Management) is running'
+        firewallenabled                     = 'Windows Firewall is off'
+        mfaenabledinbackupconsole           = 'MFA is not required for the backup console'
+        immutableorofflinemediapresence     = 'No immutable or offline copy of backups'
+        lossprotectionenabled               = 'Encryption password loss protection is off'
+        containbackupcopies                 = 'No backup copy jobs (second copy of backups)'
+        manuallinuxhostauthentication       = 'Linux host fingerprints are trusted automatically'
+        viproxytrafficencrypted             = 'VMware proxy traffic is not encrypted'
+        csmbsigningandencryptionenabled     = 'SMB signing and encryption are off'
+        webproxyautodiscoverydisabled       = 'Web Proxy Auto-Discovery (WPAD) is enabled'
+        windowsscripthostdisabled           = 'Windows Script Host is enabled'
+        llmnrdisabled                       = 'LLMNR is enabled'
+        passwordsrotation                   = 'Passwords have not been rotated recently'
+        credentialspasswordscomplexityrules = 'Stored passwords do not meet complexity rules'
+        credentialsguardconfigured          = 'Credential Guard is not configured'
+        lsassprotectedprocess               = 'LSASS is not running as a protected process'
+        netbiosdisabled                     = 'NetBIOS over TCP/IP is enabled'
+    }
+    $id = "$(Get-VAProp $Practice 'id' '')"
+    $name = "$(Get-VAProp $Practice 'bestPractice' (Get-VAProp $Practice 'name' ''))"
+    foreach ($k in $id, $name) {
+        $norm = ($k -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+        if ($norm -and $map.ContainsKey($norm)) { return $map[$norm] }
+    }
+    $raw = if ($name) { $name } elseif ($id) { $id } else { return 'Not met: unnamed check' }
+    if ($raw -notmatch '\s') {
+        # PascalCase with acronyms: "LLMNRDisabled" -> "LLMNR Disabled", "MfaEnabled" -> "MFA Enabled".
+        $raw = [regex]::Replace($raw, '(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', ' ')
+        $raw = [regex]::Replace($raw, '\b(Mfa|Smb|Ssh|Os|Vi|Lsass|Llmnr|Wpad|Tls|Rdp|Sql)\b', { $args[0].Value.ToUpperInvariant() })
+    }
+    "Not met: $raw"
+}
+
 function Invoke-VAWithMutex {
     <# Serialises access to shared state across concurrent worker processes. #>
     param([Parameter(Mandatory)][scriptblock]$ScriptBlock, [string]$Name = 'Global\VeeamAware-State', [int]$TimeoutSeconds = 60)

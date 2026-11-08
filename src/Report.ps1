@@ -689,11 +689,15 @@ function New-VARepositoryReport {
 }
 
 function New-VAAnalyzerReport {
-    param([object[]]$NewViolations, [int]$TotalViolations, $LastRun)
+    # -AllOpen: nothing was recorded before (e.g. results weren't readable on the first watch pass), so these
+    # are the findings currently open, not new ones.
+    param([object[]]$NewViolations, [int]$TotalViolations, $LastRun, [switch]$AllOpen)
     $c = @($NewViolations).Count
-    New-VAReport -Header 'Security & Compliance Analyzer' -Title 'Best-practice violations' -Status security -Icon '🛡️' `
-        -Label "$c NEW VIOLATION$(if ($c -ne 1) { 'S' })" -Summary @("$TotalViolations in total") `
-        -Quotes @($NewViolations | ForEach-Object { [ordered]@{ icon = '❌'; text = Limit-VAText "$(Get-VAProp $_ 'bestPractice' (Get-VAProp $_ 'name' 'Unnamed check'))" 200 } }) `
+    $s = if ($c -ne 1) { 'S' } else { '' }
+    New-VAReport -Header 'Security & Compliance Analyzer' -Title 'Best-practice checks not met' -Status security -Icon '🛡️' `
+        -Label $(if ($AllOpen) { "$c OPEN FINDING$s" } else { "$c NEW FINDING$s" }) `
+        -Summary @($(if ($AllOpen) { 'first check since install' } else { "$TotalViolations open in total" })) `
+        -Quotes @($NewViolations | ForEach-Object { [ordered]@{ icon = '❌'; text = Limit-VAText (Get-VAAnalyzerFinding $_) 200 } }) `
         -Facts @(New-VAFact 'Run finished' (New-VATimePart (Get-VAProp $LastRun 'endTime' (Get-VAProp $LastRun 'creationTime')) 'R')) `
         -Timestamp ([datetimeoffset]::UtcNow)
 }
