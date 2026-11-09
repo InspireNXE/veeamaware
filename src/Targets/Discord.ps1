@@ -81,6 +81,36 @@ function Measure-VAEmbed {
     return $n
 }
 
+function Split-VAOversizedEmbed {
+    <#
+    Discord rejects a message over 6000 characters, and one big embed (a large digest or job) can be over that on
+    its own. Its fields move into follow-on embeds of the same colour; an over-long description is shortened.
+    Outputs one or more embeds, each within the limit.
+    #>
+    param([Parameter(Mandatory)]$Embed)
+    $max = $script:VADiscordLimits.CharsPerMessage - 100   # headroom for Discord's own counting
+    if ((Measure-VAEmbed $Embed) -le $max) { return $Embed }
+    $head = [ordered]@{}
+    foreach ($k in $Embed.Keys) { if ($k -ne 'fields') { $head[$k] = $Embed[$k] } }
+    $head.fields = @()
+    if ($head.Contains('description') -and (Measure-VAEmbed $head) -gt $max) {
+        $keep = [Math]::Max(200, "$($head.description)".Length - ((Measure-VAEmbed $head) - $max))
+        $head.description = Limit-VAText "$($head.description)" $keep
+    }
+    $out = [System.Collections.Generic.List[object]]::new()
+    $cur = $head
+    foreach ($f in @(if ($Embed.Contains('fields')) { $Embed.fields })) {
+        $size = "$($f.name)".Length + "$($f.value)".Length
+        if (@($cur.fields).Count -and ((Measure-VAEmbed $cur) + $size -gt $max -or @($cur.fields).Count -ge $script:VADiscordLimits.Fields)) {
+            $out.Add($cur); $cur = [ordered]@{ color = $Embed.color; fields = @() }
+        }
+        $cur.fields = @($cur.fields) + $f
+    }
+    $out.Add($cur)
+    foreach ($e in $out) { if (-not @($e.fields).Count) { $e.Remove('fields') } }
+    $out.ToArray()   # embeds are dictionaries, so the pipeline passes each one whole
+}
+
 function Group-VAEmbeds {
     <# Splits embeds into batches that respect Discord's 10-embed and 6000-character per-message limits. #>
     param([object[]]$Embeds)
@@ -88,7 +118,7 @@ function Group-VAEmbeds {
     $batches = [System.Collections.Generic.List[object]]::new()
     $current = [System.Collections.Generic.List[object]]::new()
     $chars = 0
-    foreach ($e in $Embeds) {
+    foreach ($e in @($Embeds | ForEach-Object { Split-VAOversizedEmbed $_ })) {
         $size = Measure-VAEmbed $e
         if ($current.Count -and ($current.Count -ge $l.EmbedsPerMessage -or ($chars + $size) -gt $l.CharsPerMessage)) {
             $batches.Add($current.ToArray()); $current.Clear(); $chars = 0
@@ -368,12 +398,17 @@ function Send-VADiscord {
     <#
     .SYNOPSIS
     Posts one or more embeds to the configured webhook. Mentions (if any) are attached to the first message only.
+
+    A long report goes out as several messages. If one fails after an earlier one was posted, this does not
+    throw: a retry would post the earlier messages again. It posts a short note that the rest is missing
+    instead, and counts the report as delivered. Only a failure of the first message throws.
     #>
     param(
         [Parameter(Mandatory)]$Config,
         [Parameter(Mandatory)][object[]]$Embeds,
         [string]$Content,
-        [switch]$WhatIf
+        [switch]$WhatIf,
+        [scriptblock]$Post = { param($Uri, $Json, $Files) Send-VADiscordRaw -Uri $Uri -Json $Json -Files $Files }   # tests replace it
     )
     # Every setting but webhookUrl is optional: a Discord entry in "targets" may set only what it needs.
     $d = Get-VAProp $Config 'discord'
@@ -383,7 +418,9 @@ function Send-VADiscord {
     $username = "$(Get-VAProp $d 'username' '')"
     $avatar = "$(Get-VAProp $d 'avatarUrl' '')"
     $first = $true
-    foreach ($batch in (Group-VAEmbeds $Embeds)) {
+    $batches = Group-VAEmbeds $Embeds   # already an array of batches (no @(), which would nest it)
+    $posted = 0
+    foreach ($batch in $batches) {
         $payload = [ordered]@{
             username         = if ($username) { $username } else { 'VeeamAware' }
             embeds           = @($batch)
@@ -398,7 +435,19 @@ function Send-VADiscord {
             if ($files.Count) { Write-Output "(attachments: $(($files | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))" }
             $first = $false; continue
         }
-        Send-VADiscordRaw -Uri $uri -Json $json -Files $files
+        try { & $Post $uri $json $files }
+        catch {
+            if (-not $posted) { throw }
+            $left = $batches.Count - $posted
+            Write-VALog "Discord: part $($posted + 1) of $($batches.Count) failed after earlier parts were posted; not retrying the report to avoid duplicates: $($_.Exception.Message)" -Level Warning
+            $note = [ordered]@{ username = $payload.username
+                content = "⚠️ The rest of this report ($left more part$(if ($left -ne 1) { 's' })) could not be sent. See the VeeamAware log on $env:COMPUTERNAME."
+                allowed_mentions = @{ parse = @() } }
+            if ($avatar) { $note.avatar_url = $avatar }
+            try { & $Post $uri ($note | ConvertTo-Json -Depth 4 -Compress) @() } catch { Write-VALog "Discord: the note about the missing part failed too: $($_.Exception.Message)" -Level Warning }
+            return
+        }
+        $posted++
         $first = $false
     }
 }

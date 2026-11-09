@@ -176,7 +176,8 @@ function New-VAAnalyzerAlertEvent {
         -Title $(if ($resolved) { 'Security & Compliance Analyzer: all checks passing' } else { "Security & Compliance Analyzer: $($names.Count) violation(s)" }) `
         -Text $(if ($resolved) { 'No analyzer violations.' } else { 'Violations: ' + ($names -join '; ') }) -Markdown $md `
         -Fingerprint (Get-VAFingerprint 'analyzer' 'best-practices') -Resolved:$resolved -Mention $(if ($resolved) { '' } else { 'Security' }) `
-        -Report $(if ($NewViolations) { New-VAAnalyzerReport -NewViolations $NewViolations -TotalViolations $names.Count -LastRun $LastRun -AllOpen:$AllOpen }) `
+        -Report $(if ($resolved) { New-VAAnalyzerClearReport -LastRun $LastRun }
+            elseif ($NewViolations) { New-VAAnalyzerReport -NewViolations $NewViolations -TotalViolations $names.Count -LastRun $LastRun -AllOpen:$AllOpen }) `
         -Details ([ordered]@{ violations = $names; newViolations = $newNames; runEndedAt = "$(Get-VAProp $LastRun 'endTime')" })
 }
 

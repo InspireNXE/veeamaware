@@ -31,7 +31,14 @@ if (-not $w.enabled) { Write-VALog 'Watcher disabled in config.'; return }
 $now = [datetimeoffset]::UtcNow
 $state = Read-VAState
 $firstRun = -not $state.lastWatchUtc
-$since = if ($firstRun) { $now.AddMinutes(-[int]$w.intervalMinutes) } else { (ConvertTo-VADate $state.lastWatchUtc).AddMinutes(-2) }
+# Sessions are read from where the last successful read left off, with 15 minutes of overlap: a post-job worker
+# may hold a claim for a few minutes while it retries a failing target, then release it for the watcher to pick
+# up. notifiedSessions stops the overlap from sending anything twice. At most 7 days back.
+$since = if ($firstRun) { $now.AddMinutes(-[int]$w.intervalMinutes) } else {
+    $from = ConvertTo-VADate $(if ($state.sessionsSeenUtc) { $state.sessionsSeenUtc } else { $state.lastWatchUtc })
+    $from = $from.AddMinutes(-15)
+    if ($from -lt $now.AddDays(-7)) { $now.AddDays(-7) } else { $from }
+}
 $script:sent = 0
 $hs = $w.health
 $health = $state.health
@@ -41,12 +48,22 @@ $servicesDown = $false
 $flapSettings = Get-VAFlapSettings $config
 $flaps = $state.flapping
 
+$deliver = {
+    param($e)
+    if ("$(Get-VAProp $e.details 'check' '')" -eq 'flapping') { Write-VALog "Flapping: $($e.title)" -Level Warning }
+    $script:sent += Send-VAEvent -Config $config -Event $e -WhatIf:$WhatIf
+}
+
 function Send-WatchEvent($Evt) {
     # Something that keeps going wrong and coming back gets one "flapping" card instead of every change.
-    foreach ($e in @(Invoke-VAFlapGate -Event $Evt -Flaps $flaps -Settings $flapSettings -Now $now)) {
-        if ($e -ne $Evt) { Write-VALog "Flapping: $($e.title)" -Level Warning }
-        $script:sent += Send-VAEvent -Config $config -Event $e -WhatIf:$WhatIf
-    }
+    Send-VAFlapGated -Event $Evt -Flaps $flaps -Settings $flapSettings -Now $now -Send $deliver
+}
+
+function Send-FlapSettled {
+    # Every pass, including failed ones and upgrades: a flap that ends broken often means VBR is unreachable too.
+    if ($quiet.Quiet) { return }
+    try { $null = Send-VAFlapSettled -Flaps $flaps -Settings $flapSettings -Now $now -Send $deliver }
+    catch { Write-VALog "Flapping check failed: $($_.Exception.Message)" -Level Warning }
 }
 
 function Send-HealthEvents([object[]]$Events, [string]$AlertedKey) {
@@ -81,6 +98,7 @@ if ($hs.enabled) {
 # first run after (lastWatchUtc stays put, so nothing in between is missed).
 if ($quiet.Upgrading) {
     Write-VALog 'Veeam upgrade in progress: skipping the VBR checks and digests this run'
+    Send-FlapSettled
     if (-not $WhatIf) {
         if ($hs.enabled) { Save-VAHealthState $health }
         Update-VAState { param($s) $s.flapping = $flaps } | Out-Null
@@ -115,6 +133,7 @@ try {
             if ($end -and ($now - $end).TotalSeconds -lt 60) { continue }
 
             $id = "$($s.id)"
+            if (@($state.notifiedSessions) -contains $id) { continue }   # cheap check first: the window overlaps
             if ($WhatIf) { if (Test-VASessionNotified $id) { continue } }
             elseif (-not (Add-VANotifiedSession $id)) { continue }   # the post-job worker already sent it
             try {
@@ -133,12 +152,25 @@ try {
         $events = Test-VARestOptional -What 'malware events' { Get-VAMalwareEvents }
         if ($null -ne $events) {
             $seen = [System.Collections.Generic.HashSet[string]]::new([string[]]@($state.seenMalwareEvents))
-            $new = @($events | Where-Object { $_ -and $_.id -and -not $seen.Contains("$($_.id)") })
-            if ($firstRun) { Write-VALog "First run: recording $($new.Count) existing malware event(s) without sending" }
-            else { foreach ($e in $new) { Send-WatchEvent (New-VAMalwareAlertEvent $e) } }
-            if ($new -and -not $WhatIf) {
-                $ids = @($new | ForEach-Object { "$($_.id)" })
-                Update-VAState { param($s) $s.seenMalwareEvents = @($s.seenMalwareEvents) + $ids } | Out-Null
+            # The seen list is capped, so an event older than a day before the newest one already seen counts as
+            # seen too; otherwise ids trimmed off the list would alert again on every run.
+            $high = ConvertTo-VADate $state.malwareHighWaterUtc
+            $when = { param($e) ConvertTo-VADate (Get-VAProp $e 'detectionTimeUtc' (Get-VAProp $e 'creationTime')) }
+            $new = @($events | Where-Object {
+                    $_ -and $_.id -and -not $seen.Contains("$($_.id)") -and -not ($high -and (& $when $_) -and (& $when $_) -lt $high.AddDays(-1))
+                })
+            $latest = @(@($events | ForEach-Object { & $when $_ }) + @($high) | Where-Object { $_ } | Sort-Object | Select-Object -Last 1)
+            $done = [System.Collections.Generic.List[string]]::new()
+            try {
+                if ($firstRun) { Write-VALog "First run: recording $($new.Count) existing malware event(s) without sending"; $new | ForEach-Object { $done.Add("$($_.id)") } }
+                else { foreach ($e in $new) { Send-WatchEvent (New-VAMalwareAlertEvent $e); $done.Add("$($e.id)") } }
+            }
+            finally {
+                # Record what was sent even if a later one failed, so those don't go out again.
+                if (-not $WhatIf -and ($done.Count -or $latest)) {
+                    $ids = $done.ToArray(); $hw = if ($latest) { $latest[0].ToString('o') } else { $null }
+                    Update-VAState { param($s) $s.seenMalwareEvents = @($s.seenMalwareEvents) + $ids; if ($hw) { $s.malwareHighWaterUtc = $hw } } | Out-Null
+                }
             }
         }
     }
@@ -213,13 +245,14 @@ try {
     }
 
     if ($hs.enabled) { Send-HealthEvents (Update-VAWatcherHealth -Settings $hs.watcher -Health $health -Now $now -Timing (Get-VAHealthTiming $hs 'watcher')).Events }
-    foreach ($e in @(Get-VAFlapSettledEvents -Flaps $flaps -Settings $flapSettings -Now $now)) {
-        Write-VALog "Flapping settled: $($e.title)"
-        $script:sent += Send-VAEvent -Config $config -Event $e -WhatIf:$WhatIf
-    }
+    Send-FlapSettled
     if (-not $WhatIf) {
         if ($hs.enabled) { Save-VAHealthState $health }
-        Update-VAState { param($s) $s.lastWatchUtc = $now.ToString('o') } | Out-Null
+        # The session window only moves on once the session list was actually read, so a failed read is
+        # covered by the next run instead of being skipped.
+        $sessionsRead = $null -ne $sessions -or -not ($w.missedSessions -or $wantStuck)
+        Update-VAState { param($s) $s.lastWatchUtc = $now.ToString('o'); if ($sessionsRead) { $s.sessionsSeenUtc = $now.ToString('o') } } | Out-Null
+        if (-not $sessionsRead) { Write-VALog 'Session list not read this run; the next run looks back further to cover it.' -Level Warning }
     }
     Write-VALog "Watch pass complete: $script:sent delivery(ies)$(if ($firstRun) { ' (first run baseline)' })"
 }
@@ -237,6 +270,7 @@ catch {
         }
         catch { Write-VALog "Could not record the watcher failure: $($_.Exception.Message)" -Level Warning }
     }
+    if (-not $WhatIf) { Send-FlapSettled }
     exit 1
 }
 finally {

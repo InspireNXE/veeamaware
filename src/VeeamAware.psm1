@@ -1,6 +1,6 @@
 #Requires -Version 7.2
 # VeeamAware - notifications for Veeam Backup & Replication v13 (Discord, Teams, generic webhooks, plugins).
-# Copyright (c) 2026 VeeamAware contributors. MIT License, see LICENSE.
+# Copyright (c) 2026 InspireNXE. MIT License, see LICENSE.
 
 Set-StrictMode -Version 3.0
 

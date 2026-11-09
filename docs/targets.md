@@ -92,7 +92,10 @@ Each request's body is one event (`veeamaware.event/v1`):
 
 - `X-VeeamAware-Event: <kind>` and `X-VeeamAware-Delivery: <id>` on every request
 - `Authorization: Bearer …` with `tokenFile`
-- `X-VeeamAware-Signature: sha256=<hex HMAC-SHA256 of the raw body>` with `signingSecretFile`
+- `X-VeeamAware-Timestamp: <unix seconds>` on every request.
+- `X-VeeamAware-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>">` with `signingSecretFile`. To verify, recompute it from the timestamp header, a dot and the raw body, compare in constant time, and refuse requests whose timestamp is more than about 5 minutes old. That stops replays.
+
+A target with `tokenFile` or `signingSecretFile` must use `https://`. Plain `http://` is only accepted on the local network: `localhost`, private IPv4 addresses, single-label names and `.local` names.
 
 Deliveries are retried on 429 and 5xx, and one failing target never blocks the others.
 

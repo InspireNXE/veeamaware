@@ -266,6 +266,7 @@ function Edit-Digest {
             Write-VAOption ($i + 1) "$($list[$i].Name) ($($list[$i].Type))" -Current:($cur -contains '*' -or $cur -contains $list[$i].Name)
         }
         $default = if ($cur -contains '*') { 'all' } else { (@(for ($i = 0; $i -lt $list.Count; $i++) { if ($cur -contains $names[$i]) { $i + 1 } })) -join ',' }
+        if (-not $default) { $default = 'all' }   # it only named targets that no longer exist
         while ($true) {
             $a = Read-VAInput 'Send it to' $default 'numbers like 1,3, or all'
             if (-not $a) { $a = $default }
@@ -390,6 +391,15 @@ $config = Get-VAConfig -Path $configPath -AllowNoTargets
 foreach ($m in @(Get-VAConfigMigrations)) { Write-VAHint "Config: $m" }
 
 # 2. Folders and permissions --------------------------------------------------------------------------------
+# The whole folder: the watcher runs this code as SYSTEM, and a folder under C:\ is writable by any user by
+# default. SYSTEM and Administrators full, Users read; Administrators own it. Then reset what's under it (except
+# the folders below, which get their own) so everything inherits that.
+& icacls.exe $root /setowner '*S-1-5-32-544' /C /Q | Out-Null
+& icacls.exe $root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /C /Q | Out-Null
+if ($LASTEXITCODE) { Write-VAWarn "icacls failed on $root (exit $LASTEXITCODE). Any user may be able to change VeeamAware's code." }
+foreach ($item in @(Get-ChildItem -LiteralPath $root -Force | Where-Object { $_.Name -notin 'config', 'secrets', 'state', 'logs', 'plugins' })) {
+    & icacls.exe $item.FullName /reset /T /C /Q | Out-Null
+}
 foreach ($dir in 'config', 'secrets', 'state', 'logs', 'plugins') {
     $path = Join-Path $root $dir
     if (-not (Test-Path $path)) { New-Item -ItemType Directory $path | Out-Null }

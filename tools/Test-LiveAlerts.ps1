@@ -36,7 +36,7 @@ $backup = "$cfgPath.before-live-test"
 $flag = Resolve-VAPath 'state\test-watcher-failure'
 
 function Show-Status {
-    Write-Host "Stuck-job test:   $(if (Test-Path -LiteralPath $backup) { 'on (config.json changed; -Stop restores it)' } else { 'off' })"
+    Write-Host "Config changes:   $(if (Test-Path -LiteralPath $backup) { 'yes (-Stop restores config.json)' } else { 'none' })"
     Write-Host "Watcher test:     $(if (Test-Path -LiteralPath $flag) { 'on (every watcher run fails)' } else { 'off' })"
 }
 
@@ -47,9 +47,19 @@ if ($Stop) {
 }
 if (-not $Stuck -and -not $Watcher) { Show-Status; return }
 
+# Both tests need the watcher and health alerts switched on; config.json is saved first and -Stop restores it.
+if (-not (Test-Path -LiteralPath $cfgPath)) { throw "No config at $cfgPath. Run Install-VeeamAware.ps1 first." }
+if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $cfgPath -Destination $backup }
+$json = Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json
+foreach ($k in 'watch.enabled', 'watch.health.enabled') {
+    if (-not (Get-VASetupValue $json $k $true)) { Set-VASetupValue $json $k $true; Write-Host "Turned on $k for the test." }
+}
+if ($Watcher -and [int](Get-VASetupValue $json 'watch.health.watcher.failureAlertAfter' 3) -le 0) {
+    Set-VASetupValue $json 'watch.health.watcher.failureAlertAfter' 3; Write-Host 'Turned on watcher failure alerts (after 3 runs) for the test.'
+}
+$json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath -Encoding utf8NoBOM
+
 if ($Stuck) {
-    if (-not (Test-Path -LiteralPath $cfgPath)) { throw "No config at $cfgPath. Run Install-VeeamAware.ps1 first." }
-    if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $cfgPath -Destination $backup }
     $json = Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json
     Set-VASetupValue $json 'watch.health.sessions.enabled' $true
     Set-VASetupValue $json 'watch.health.sessions.minHours' 0

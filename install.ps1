@@ -53,7 +53,8 @@ if (-not $Channel) {
 }
 
 function Get-SemVer([string]$Text) {
-    if ($Text -notmatch '^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$') { return $null }
+    # Build metadata (+...) is allowed and ignored, as in src\Update.ps1.
+    if ($Text -notmatch '^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$') { return $null }
     $patch = 0; if ($Matches[3]) { $patch = [int]$Matches[3] }
     [pscustomobject]@{ Version = New-Object version ([int]$Matches[1]), ([int]$Matches[2]), $patch; Pre = [string]$Matches[4] }
 }
@@ -110,7 +111,12 @@ try {
     if ($watchTask) { $watchTask | Disable-ScheduledTask | Out-Null; Stop-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' -ErrorAction SilentlyContinue }
 
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path | Out-Null }
-    $rc = @('/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:2')
+    # The watcher runs this code as SYSTEM, and C:\ lets any user modify new folders: lock the folder down
+    # (SYSTEM and Administrators full, Users read) and take ownership before copying code into it.
+    & icacls.exe $Path /setowner '*S-1-5-32-544' /C /Q | Out-Null
+    & icacls.exe $Path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /C /Q | Out-Null
+    if ($LASTEXITCODE) { throw "Could not set permissions on $Path (icacls $LASTEXITCODE)" }
+    $rc =@('/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:2')
     robocopy $src $Path /XF '.gitignore' '.gitattributes' @rc | Out-Null                          # top-level files
     if ($LASTEXITCODE -ge 8) { throw "Copy failed (robocopy $LASTEXITCODE)" }
     foreach ($dir in 'src', 'assets', 'docs', 'tests', 'tools') {                                    # ours: mirror
@@ -127,6 +133,11 @@ try {
     Copy-Item (Join-Path $src 'config\config.example.json') (Join-Path $Path 'config\config.example.json') -Force
     Copy-Item (Join-Path $src 'plugins\targets\README.md') (Join-Path $Path 'plugins\targets\README.md') -Force -ErrorAction SilentlyContinue
     Get-ChildItem $Path -Recurse -File -Include '*.ps1', '*.psm1', '*.psd1' | Unblock-File
+}
+catch {
+    # Don't leave monitoring switched off: the watcher is what would tell anyone something is wrong.
+    if ($watchTask) { $watchTask | Enable-ScheduledTask | Out-Null }
+    throw
 }
 finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

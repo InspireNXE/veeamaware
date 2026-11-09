@@ -215,6 +215,25 @@ function Test-VATarget {
 
 function Get-VAUserAgent { "VeeamAware/$script:VAVersion PowerShell/$($PSVersionTable.PSVersion.Major).$($PSVersionTable.PSVersion.Minor)" }
 
+function Format-VASafeUrl {
+    <#
+    A URL for logs and error messages. Webhook URLs carry their secret in the path or query (Discord's token,
+    Teams' sig=, most generic webhooks), so only scheme and host are kept. The local VBR REST API keeps its
+    path (no secrets there), never the query.
+    #>
+    param([AllowNull()][string]$Url)
+    if ("$Url" -notmatch '^(?<base>https?://(?<host>[^/?#:]+)(?::\d+)?)(?<path>/[^?#]*)?') { return '(url)' }
+    if ($Matches['host'] -in 'localhost', '127.0.0.1', '::1') { return "$($Matches['base'])$($Matches['path'])" }
+    "$($Matches['base'])/…"
+}
+
+function Hide-VAUrlSecret {
+    <# Replaces the full URL in a message (an error text that echoes it back) with its safe form. #>
+    param([AllowNull()][string]$Text, [AllowNull()][string]$Url)
+    if (-not $Text -or -not $Url) { return $Text }
+    $Text.Replace($Url, (Format-VASafeUrl $Url))
+}
+
 function Invoke-VAHttpJson {
     <# JSON request with retries on 429/5xx/network errors. Returns the parsed response body (or $null). #>
     param([Parameter(Mandatory)][string]$Method, [Parameter(Mandatory)][string]$Uri, [System.Collections.IDictionary]$Headers = @{},
@@ -226,7 +245,7 @@ function Invoke-VAHttpJson {
         }
         try { $resp = Invoke-WebRequest @params }
         catch {
-            if ($attempt -eq $Attempts) { throw "Request to $Uri failed: $($_.Exception.Message)" }
+            if ($attempt -eq $Attempts) { throw "Request to $(Format-VASafeUrl $Uri) failed: $(Hide-VAUrlSecret "$($_.Exception.Message)" $Uri)" }
             Start-Sleep -Seconds (2 * $attempt); continue
         }
         $code = [int]$resp.StatusCode
@@ -240,7 +259,7 @@ function Invoke-VAHttpJson {
             if ($ra -match '^\d+$') { $wait = [Math]::Min(60, [int]$ra) }
             Start-Sleep -Seconds $wait; continue
         }
-        $ex = [System.Exception]::new("$Method $Uri returned $code`: $(Limit-VAText "$($resp.Content)" 500)")
+        $ex = [System.Exception]::new("$Method $(Format-VASafeUrl $Uri) returned $code`: $(Hide-VAUrlSecret (Limit-VAText "$($resp.Content)" 500) $Uri)")
         $ex.Data['StatusCode'] = $code
         throw $ex
     }

@@ -94,12 +94,17 @@ try {
     # The watcher cannot report its own scheduled task not running; the hook still runs, so it checks.
     if (-not $WhatIf) {
         try {
-            $stale = Get-VAWatcherStaleEvent -Config $config -State (Read-VAState)
-            if ($stale) {
-                Write-VALog "Watcher has not run since $((Read-VAState).lastWatchUtc); sending a health alert" -Level Warning
-                Send-VAEvent -Config $config -Event $stale | Out-Null
-                $at = [datetimeoffset]::UtcNow.ToString('o')
-                Update-VAState { param($s) $s.health.staleAlertedAt = $at } | Out-Null
+            # Check and mark in one step under the state lock, so several jobs ending together send it once.
+            $at = [datetimeoffset]::UtcNow.ToString('o')
+            $claim = Update-VAState {
+                param($s)
+                $e = Get-VAWatcherStaleEvent -Config $config -State $s
+                if ($e) { $prev = $s.health.staleAlertedAt; $s.health.staleAlertedAt = $at; @{ Event = $e; Prev = $prev; Last = $s.lastWatchUtc } }
+            }
+            if ($claim) {
+                Write-VALog "Watcher has not run since $($claim.Last); sending a health alert" -Level Warning
+                try { Send-VAEvent -Config $config -Event $claim.Event | Out-Null }
+                catch { $p = $claim.Prev; Update-VAState { param($s) $s.health.staleAlertedAt = $p } | Out-Null; throw }
             }
         }
         catch { Write-VALog "Watcher check failed: $($_.Exception.Message)" -Level Debug }

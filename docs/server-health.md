@@ -21,7 +21,8 @@ Three timings apply to every check. They live under `watch.health`, and any chec
 Something that keeps going wrong and coming back, like a service that crashes every half hour or a repository hovering on a free-space threshold, would otherwise send a card every time it changes. Instead:
 
 - After 4 changes (alerts or recoveries; reminders don't count) within 60 minutes, one **Flapping** card goes out and further cards for it are held.
-- Once it has stayed the same for 30 minutes, one **Settled** card says how it ended up: OK, or still a problem.
+- Once it has stayed the same for 30 minutes, one **Settled** card says how it ended up: OK, or still a problem. This is checked on every watcher run, including runs that fail because VBR is down.
+- Only delivered cards count as changes, so an outage while Discord or Teams is unreachable isn't mistaken for flapping.
 
 This covers services, the watcher and repositories. Settings under `watch.flapping`: `enabled`, `changes`, `withinMinutes`, `settleMinutes`.
 

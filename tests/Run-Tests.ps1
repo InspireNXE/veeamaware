@@ -535,8 +535,21 @@ It 'webhook body is the public schema with a valid HMAC' {
     Assert (-not $doc.PSObject.Properties['discord']) 'discord rendering leaked into webhook body'
     Assert-Eq $doc.details.objects[0].name 'sql-01'
     $h = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes('shh'))
-    $expected = 'sha256=' + [Convert]::ToHexString($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($c.Body))).ToLowerInvariant()
+    $ts = $c.Headers['X-VeeamAware-Timestamp']
+    Assert ($ts -match '^\d{10}$' -and [math]::Abs([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$ts) -lt 60) "timestamp: $ts"
+    $expected = 'sha256=' + [Convert]::ToHexString($h.ComputeHash([Text.Encoding]::UTF8.GetBytes("$ts.$($c.Body)"))).ToLowerInvariant()
     Assert-Eq $c.Headers['X-VeeamAware-Signature'] $expected
+}
+It 'webhook secrets need https, except on the local network' {
+    $v = (Get-VATargetType 'webhook').Validate
+    $bad = @(& $v ([ordered]@{ type = 'webhook'; name = 'x'; url = 'http://hooks.example.com/in'; tokenFile = 'secrets\none.json' }) $null)
+    Assert (@($bad | Where-Object { $_ -match 'https' }).Count) 'public http with a token is refused'
+    foreach ($u in 'http://localhost:5678/x', 'http://192.168.1.20/x', 'http://10.0.0.5/x', 'http://172.20.1.1/x', 'http://n8n/x', 'http://n8n.local/x') {
+        $r = @(& $v ([ordered]@{ type = 'webhook'; name = 'x'; url = $u; signingSecretFile = 'secrets\none.json' }) $null)
+        Assert (-not @($r | Where-Object { $_ -match 'https' }).Count) "$u should be allowed"
+    }
+    $plain = @(& $v ([ordered]@{ type = 'webhook'; name = 'x'; url = 'http://hooks.example.com/in' }) $null)
+    Assert (-not @($plain | Where-Object { $_ -match 'https' }).Count) 'http without secrets is allowed'
 }
 It 'one failing target does not block the others' {
     & (Get-Module VeeamAware) {
@@ -1158,6 +1171,11 @@ It 'flapping: one card instead of every change, then one when it settles' {
     # ...settled 30 min after that last change, and it ended up running: settled OK
     $s = @(Get-VAFlapSettledEvents -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(72))
     Assert-Eq "$($s.Count)|$($s[0].resolved)|$($s[0].report.label)" '1|True|SETTLED · OK'
+    # a settled card that can't be delivered stays due; once delivered the entry goes
+    Assert-Eq (Send-VAFlapSettled -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(72) -Send { throw 'targets down' }) 0
+    Assert $flaps.Contains($fp) 'kept for a retry'
+    $got = [System.Collections.Generic.List[object]]::new()
+    Assert-Eq (Send-VAFlapSettled -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(77) -Send { param($e) $got.Add($e) }) 1
     Assert (-not $flaps.Contains($fp)) 'entry cleared'
     # one that ends up down settles as a problem
     $flaps2 = [ordered]@{}
@@ -1170,6 +1188,75 @@ It 'flapping: one card instead of every change, then one when it settles' {
     # disabled: everything passes
     $off = [pscustomobject]@{ Enabled = $false; Changes = 1; Within = 60; Settle = 30 }
     Assert-Eq @(Invoke-VAFlapGate -Event (& $down) -Flaps ([ordered]@{}) -Settings $off -Now $f0).Count 1
+}
+It 'flapping: an alert that fails to send is not a change' {
+    $f0 = [datetimeoffset]::new(2026, 11, 6, 10, 0, 0, [timespan]::Zero)
+    $fs = Get-VAFlapSettings (New-MockConfig)
+    $flaps = [ordered]@{}
+    $svc = [pscustomobject]@{ Name = 'VeeamBackupSvc'; DisplayName = 'Veeam Backup Service'; Status = 'Stopped'; StartType = 'Automatic' }
+    $down = New-VAServiceAlertEvent -Down @($svc) -New @($svc) -Since @{ VeeamBackupSvc = (Get-VAIso $f0) } -Now $f0
+    # the service stays down while Discord is unreachable for six runs: every attempt fails...
+    for ($i = 0; $i -lt 6; $i++) {
+        $threw = $false
+        try { Send-VAFlapGated -Event $down -Flaps $flaps -Settings $fs -Now $f0.AddMinutes($i * 5) -Send { throw 'discord down' } } catch { $threw = $true }
+        Assert $threw 'the failure reaches the caller (so it retries)'
+    }
+    Assert (-not $flaps.Contains($down.fingerprint)) 'failed sends left no trace'
+    # ...and when Discord is back, the real alert goes out, not a "flapping" card
+    $got = [System.Collections.Generic.List[object]]::new()
+    Send-VAFlapGated -Event $down -Flaps $flaps -Settings $fs -Now $f0.AddMinutes(30) -Send { param($e) $got.Add($e) }
+    Assert-Eq "$($got.Count)|$($got[0].status)" '1|ServiceDown'
+}
+It 'masks webhook secrets in errors' {
+    Assert-Eq (Format-VASafeUrl 'https://prod-1.westus.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke?api-version=1&sig=SECRET') 'https://prod-1.westus.logic.azure.com:443/…'
+    Assert-Eq (Format-VASafeUrl 'https://localhost:9419/api/v1/sessions?limit=1') 'https://localhost:9419/api/v1/sessions'
+    Assert-Eq (Hide-VAUrlSecret 'POST https://hooks.example/x/TOKEN failed' 'https://hooks.example/x/TOKEN') 'POST https://hooks.example/… failed'
+}
+It 'analyzer all clear has a card' {
+    $e = New-VAAnalyzerAlertEvent -NewViolations @() -AllViolations @() -LastRun ([pscustomobject]@{ endTime = '2026-11-06T10:00:00Z' })
+    Assert-Eq "$($e.resolved)|$($e.report.label)|$($e.report.status)" 'True|ALL CLEAR|success'
+}
+It 'digest schedule keeps local time across a clock change' {
+    $tz = [TimeZoneInfo]::FindSystemTimeZoneById('GMT Standard Time')   # London: BST ends 2026-10-25 02:00
+    $d = [pscustomobject]@{ name = 'daily'; schedule = [pscustomobject]@{ every = 'day'; at = '08:00' } }
+    # Sunday 01:30 BST is 00:30Z, before Sunday's 08:00: the last occurrence is Saturday 08:00 BST = 07:00Z
+    Assert-Eq (Get-VADigestOccurrence -Digest $d -Now ([datetimeoffset]'2026-10-25T00:30:00Z') -TimeZone $tz).ToString('u') '2026-10-24 07:00:00Z'
+    # after the change (GMT), Sunday 08:00 is 08:00Z
+    Assert-Eq (Get-VADigestOccurrence -Digest $d -Now ([datetimeoffset]'2026-10-25T09:00:00Z') -TimeZone $tz).ToString('u') '2026-10-25 08:00:00Z'
+    $w = [pscustomobject]@{ name = 'weekly'; schedule = [pscustomobject]@{ every = 'week'; day = 'Saturday'; at = '08:00' } }
+    Assert-Eq (Get-VADigestOccurrence -Digest $w -Now ([datetimeoffset]'2026-10-26T12:00:00Z') -TimeZone $tz).ToString('u') '2026-10-24 07:00:00Z'
+    # the run that went out Saturday 08:00 BST counts: no second digest early Sunday
+    $due = Get-VADigestDue -Digest $d -LastRun '2026-10-24T07:05:00Z' -Now ([datetimeoffset]'2026-10-25T01:10:00Z') -TimeZone $tz
+    Assert (-not $due.Due) 'not due again after the clocks go back'
+}
+It 'splits a Discord embed over 6000 characters' {
+    $fields = 1..12 | ForEach-Object { @{ name = "Field $_"; value = ('x' * 1000) } }
+    $big = [ordered]@{ color = 1; title = 'Big'; description = ('d' * 3000); fields = @($fields) }
+    $parts = @(Split-VAOversizedEmbed $big)
+    Assert ($parts.Count -ge 3) "split into $($parts.Count)"
+    foreach ($p in $parts) { Assert ((Measure-VAEmbed $p) -le 6000) "part is $(Measure-VAEmbed $p) chars" }
+    Assert-Eq (@($parts | ForEach-Object { @($_.fields).Count } | Measure-Object -Sum).Sum) 12
+    Assert-Eq $parts[0].title 'Big'
+    Assert-DiscordLimits @($big) | Out-Null
+}
+It 'a long Discord report that fails partway is not posted twice' {
+    $cfg = @{ discord = @{ webhookUrl = 'https://discord.com/api/webhooks/1/aaa' } }
+    $embeds = @(1..3 | ForEach-Object { [ordered]@{ color = 1; title = "Part $_"; description = ('x' * 4000) } })   # 3 messages
+    # second message fails: no throw, a note follows, nothing is reposted
+    $posts = [System.Collections.Generic.List[string]]::new()
+    $n = 0
+    Send-VADiscord -Config $cfg -Embeds $embeds -Post { param($u, $j, $f) $script:n++; if ($script:n -eq 2) { throw 'HTTP 500' }; $posts.Add($j) }
+    Assert-Eq $posts.Count 2
+    Assert ($posts[0] -match 'Part 1') 'first part posted'
+    Assert ($posts[1] -match 'could not be sent' -and $posts[1] -match '2 more parts') "note: $($posts[1])"
+    # first message fails: throws, so the caller retries the whole report
+    $threw = $false
+    try { Send-VADiscord -Config $cfg -Embeds $embeds -Post { throw 'HTTP 500' } } catch { $threw = $true }
+    Assert $threw 'nothing posted yet: safe to retry'
+    # a single message that works
+    $one = [System.Collections.Generic.List[string]]::new()
+    Send-VADiscord -Config $cfg -Embeds @($embeds[0]) -Post { param($u, $j, $f) $one.Add($j) }
+    Assert-Eq $one.Count 1
 }
 It 'flapping state survives a save and reload' {
     $p = Join-Path $tmp 'flap-state.json'; Set-VAStatePath $p

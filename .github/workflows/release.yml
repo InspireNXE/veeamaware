@@ -14,8 +14,10 @@ jobs:
       - uses: actions/checkout@v7
       - name: Tag matches the module version
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}   # through env, never pasted into the script
         run: |
-          $tag = '${{ github.ref_name }}'
+          $tag = $env:TAG
           $line = Select-String -Path ./src/VeeamAware.psm1 -Pattern "^\`$script:VAVersion = '([^']+)'" | Select-Object -First 1
           if (-not $line) { throw 'VAVersion not found in src/VeeamAware.psm1' }
           $version = $line.Matches[0].Groups[1].Value
@@ -27,8 +29,9 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          $tag = '${{ github.ref_name }}'
+          $tag = $env:TAG
           $flags = @('--generate-notes', '--title', "VeeamAware $tag")
           if ($tag -match '-') { $flags += '--prerelease' }   # v0.4.0-preview.1 -> preview channel only
           gh release create $tag @flags

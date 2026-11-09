@@ -5,24 +5,41 @@
 #   method             POST (default) or PUT
 #   headers            extra headers, e.g. { "X-Team": "infra" }
 #   tokenFile          DPAPI secret file (Set-VeeamAwareSecret.ps1) sent as "Authorization: Bearer <token>"
-#   signingSecretFile  DPAPI secret file used to sign the body (X-VeeamAware-Signature: sha256=<hex HMAC>)
+#   signingSecretFile  DPAPI secret file used to sign each request (see below)
 #   timeoutSeconds     default 30
 #
-# Headers on every request: X-VeeamAware-Event: <kind>, X-VeeamAware-Delivery: <event id>.
+# Headers on every request: X-VeeamAware-Event: <kind>, X-VeeamAware-Delivery: <event id>,
+# X-VeeamAware-Timestamp: <unix seconds>. With signingSecretFile, X-VeeamAware-Signature: sha256=<hex HMAC-SHA256
+# of "<timestamp>.<body>">; signing the timestamp lets a receiver refuse old (replayed) requests.
+# A target with a token or signing secret must use https://, except on the local network.
 
 function Send-VAWebhookEvent {
     param([Parameter(Mandatory)]$Target, [Parameter(Mandatory)]$Event, $Context)
     $body = ConvertTo-VAEventJson $Event
-    $headers = [ordered]@{ 'X-VeeamAware-Event' = $Event.kind; 'X-VeeamAware-Delivery' = $Event.id }
+    $ts = "$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+    $headers = [ordered]@{ 'X-VeeamAware-Event' = $Event.kind; 'X-VeeamAware-Delivery' = $Event.id; 'X-VeeamAware-Timestamp' = $ts }
     $extra = Get-VATargetOption $Target 'headers' $null
     if ($extra) { foreach ($k in $extra.Keys) { $headers[$k] = "$($extra[$k])" } }
     if (Get-VATargetOption $Target 'tokenFile' $null) { $headers.Authorization = "Bearer $(Get-VASecret $Target.tokenFile)" }
     if (Get-VATargetOption $Target 'signingSecretFile' $null) {
-        $headers['X-VeeamAware-Signature'] = 'sha256=' + (Get-VAHmacSha256 -Key (Get-VASecret $Target.signingSecretFile) -Data $body)
+        $headers['X-VeeamAware-Signature'] = 'sha256=' + (Get-VAHmacSha256 -Key (Get-VASecret $Target.signingSecretFile) -Data "$ts.$body")
     }
     if ($Context -and $Context.WhatIf) { Write-Output $body; return }
     Invoke-VAHttpJson -Method (Get-VATargetOption $Target 'method' 'POST') -Uri $Target.url -Headers $headers -Body $body `
         -TimeoutSec ([int](Get-VATargetOption $Target 'timeoutSeconds' 30)) | Out-Null
+}
+
+function Test-VALocalUrl {
+    <# localhost, a private IPv4 address (10/8, 172.16/12, 192.168/16), a single-label name or a .local name. #>
+    param([string]$Url)
+    if ("$Url" -notmatch '^https?://(?:\[(?<h>[^\]]+)\]|(?<h>[^/:?#]+))') { return $false }
+    $h = $Matches['h'].ToLowerInvariant()
+    if ($h -in 'localhost', '::1' -or $h -notmatch '\.' -or $h.EndsWith('.local')) { return $true }
+    if ($h -match '^(\d+)\.(\d+)\.\d+\.\d+$') {
+        $a = [int]$Matches[1]; $b = [int]$Matches[2]
+        return ($a -eq 10 -or $a -eq 127 -or ($a -eq 192 -and $b -eq 168) -or ($a -eq 172 -and $b -ge 16 -and $b -le 31))
+    }
+    $false
 }
 
 function Get-VAHmacSha256 {
@@ -37,6 +54,10 @@ Register-VATargetType -Type webhook -Description 'Generic JSON webhook (veeamawa
     -Validate {
         param($Target, $Context)
         if ("$($Target.url)" -notmatch '^https?://') { 'url must start with http:// or https://.' }
+        elseif ("$($Target.url)" -match '^http://' -and ((Get-VATargetOption $Target 'tokenFile' $null) -or (Get-VATargetOption $Target 'signingSecretFile' $null)) -and
+            -not (Test-VALocalUrl "$($Target.url)")) {
+            'url must use https:// when tokenFile or signingSecretFile is set (plain http:// is only allowed on the local network).'
+        }
         if ("$(Get-VATargetOption $Target 'method' 'POST')" -notin 'POST', 'PUT') { 'method must be POST or PUT.' }
         foreach ($k in 'tokenFile', 'signingSecretFile') {
             $f = Get-VATargetOption $Target $k $null

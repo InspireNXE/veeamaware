@@ -10,6 +10,8 @@ function New-VAState {
     [ordered]@{
         version           = 1
         lastWatchUtc      = $null
+        sessionsSeenUtc   = $null   # when the watcher last read the session list successfully
+        malwareHighWaterUtc = $null # newest malware detection seen (older ones count as seen; see the watcher)
         digests           = [ordered]@{}   # digest name -> last run (UTC, ISO-8601)
         notifiedSessions  = @()   # session ids posted individually (hook or watcher)
         seenMalwareEvents = @()
@@ -34,8 +36,20 @@ function ConvertTo-VAIsoString {
 function Read-VAState {
     $state = New-VAState
     if (Test-Path $script:VAStatePath) {
+        # A file another program holds open for a moment (antivirus, backup) is retried, and if it still can't be
+        # read the caller fails rather than carrying on with empty state, which would forget everything already
+        # sent once it was saved. Only a file that reads but doesn't parse is set aside as corrupt.
+        $text = $null
+        for ($i = 1; $null -eq $text; $i++) {
+            try { $text = [System.IO.File]::ReadAllText($script:VAStatePath) }
+            catch [System.IO.IOException] {
+                if ($i -ge 5) { throw "Can't read $($script:VAStatePath): $($_.Exception.Message)" }
+                Start-Sleep -Milliseconds (200 * $i)
+            }
+        }
         try {
-            $json = Get-Content -Raw $script:VAStatePath | ConvertFrom-Json -AsHashtable
+            $json = $text | ConvertFrom-Json -AsHashtable
+            if ($json -isnot [System.Collections.IDictionary]) { throw 'not a JSON object' }
             foreach ($k in @($json.Keys)) { $state[$k] = $json[$k] }
         }
         catch {
@@ -61,7 +75,7 @@ function Read-VAState {
     }
     # ConvertFrom-Json turns ISO timestamps into DateTime; keep them as ISO-8601 UTC strings.
     foreach ($k in @($state.digests.Keys)) { $state.digests[$k] = ConvertTo-VAIsoString $state.digests[$k] }
-    $state.lastWatchUtc = ConvertTo-VAIsoString $state.lastWatchUtc
+    foreach ($k in 'lastWatchUtc', 'sessionsSeenUtc', 'malwareHighWaterUtc') { $state[$k] = ConvertTo-VAIsoString $state[$k] }
     $state.health = ConvertTo-VAHealthState $state.health
     # Pre-release builds kept one digest marker; it belongs to the "daily" digest that config migration creates.
     if ($state.Contains('lastDigestUtc')) {

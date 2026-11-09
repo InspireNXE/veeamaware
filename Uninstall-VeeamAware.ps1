@@ -14,22 +14,27 @@ can check them by hand.
 
 .EXAMPLE
 pwsh -File C:\VeeamAware\Uninstall-VeeamAware.ps1                # hooks and tasks; keep the folder
-pwsh -File C:\VeeamAware\Uninstall-VeeamAware.ps1 -RemoveFiles   # everything
+pwsh -File C:\VeeamAware\Uninstall-VeeamAware.ps1 -RemoveFiles   # everything (kept if the hooks can't be removed; -Force deletes anyway)
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [switch]$RemoveFiles,
-    [switch]$KeepHooks
+    [switch]$KeepHooks,
+    [switch]$Force   # with -RemoveFiles: delete the folder even if the hooks could not be removed
 )
 
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
+$hooksFailed = $false
 
 # 1. Post-job hooks --------------------------------------------------------------------------------------
 if (-not $KeepHooks) {
     Write-Host 'Removing the post-job hook from VBR jobs...'
     try { & (Join-Path $root 'Register-VeeamAwareJob.ps1') -Remove -Apply }
-    catch { Write-Warning "Could not update the jobs ($($_.Exception.Message)). Remove the hook by hand: Job → Edit → Advanced → Scripts." }
+    catch {
+        $hooksFailed = $true
+        Write-Warning "Could not update the jobs ($($_.Exception.Message)). Remove the hook by hand: Job → Edit → Advanced → Scripts."
+    }
 }
 
 # 2. Scheduled tasks ---------------------------------------------------------------------------------------
@@ -46,7 +51,11 @@ try {
 catch { }   # not there, or not empty
 
 # 3. Files ---------------------------------------------------------------------------------------------------
-if ($RemoveFiles) {
+if ($RemoveFiles -and $hooksFailed -and -not $Force) {
+    # Jobs still pointing at a deleted script would end with a warning on every run.
+    Write-Warning "Kept $root because the post-job hook is still on some jobs. Remove it by hand (or fix the error above and run this again), then re-run with -RemoveFiles. -Force deletes the folder anyway."
+}
+elseif ($RemoveFiles) {
     if ($PSCmdlet.ShouldProcess($root, 'Delete the VeeamAware folder, including config, secrets, state and logs')) {
         # Windows can't delete a folder that is any process's current directory. Step this session out of it
         # (a script shares its caller's location, so this moves the caller's prompt too) and start the

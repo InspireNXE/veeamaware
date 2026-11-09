@@ -220,7 +220,7 @@ C:\VeeamAware\Uninstall-VeeamAware.ps1                # remove the hook and the 
 C:\VeeamAware\Uninstall-VeeamAware.ps1 -RemoveFiles   # also delete C:\VeeamAware, including settings and secrets
 ```
 
-It removes the hook only where it runs `VeeamAware.ps1`, and leaves other scripts alone. It lists the jobs it can't change, such as agent jobs, for you to check by hand.
+It removes the hook only where it runs `VeeamAware.ps1`, and leaves other scripts alone. It lists the jobs it can't change, such as agent jobs, for you to check by hand. If it can't reach VBR to remove the hook, `-RemoveFiles` keeps the folder, since jobs still pointing at a deleted script would warn on every run; add `-Force` to delete it anyway.
 
 ## How it works
 

@@ -59,6 +59,39 @@ function Invoke-VAFlapGate {
     return $Event
 }
 
+function Send-VAFlapGated {
+    <#
+    Sends one event through the flap gate with $Send (a scriptblock taking the event). A change only counts
+    once it is delivered: if $Send throws, the fingerprint's entry goes back to how it was, so an outage
+    while the targets are unreachable doesn't look like flapping.
+    #>
+    param([Parameter(Mandatory)]$Event, [Parameter(Mandatory)][System.Collections.IDictionary]$Flaps,
+        [Parameter(Mandatory)]$Settings, [datetimeoffset]$Now = [datetimeoffset]::UtcNow, [Parameter(Mandatory)][scriptblock]$Send)
+    $fp = if (Test-VAFlapCandidate $Event) { "$($Event.fingerprint)" } else { '' }
+    $before = $null
+    if ($fp -and $Flaps.Contains($fp)) { $before = [ordered]@{}; foreach ($k in @($Flaps[$fp].Keys)) { $before[$k] = $Flaps[$fp][$k] } }
+    try { foreach ($e in @(Invoke-VAFlapGate -Event $Event -Flaps $Flaps -Settings $Settings -Now $Now)) { & $Send $e } }
+    catch {
+        if ($fp) { if ($before) { $Flaps[$fp] = $before } elseif ($Flaps.Contains($fp)) { $Flaps.Remove($fp) } }
+        throw
+    }
+}
+
+function Send-VAFlapSettled {
+    <#
+    Sends the "settled" cards that are due and forgets each fingerprint once its card is delivered. Never
+    throws: a card that can't be delivered stays due and is tried again on the next pass. Returns the number sent.
+    #>
+    param([Parameter(Mandatory)][System.Collections.IDictionary]$Flaps, [Parameter(Mandatory)]$Settings,
+        [datetimeoffset]$Now = [datetimeoffset]::UtcNow, [Parameter(Mandatory)][scriptblock]$Send)
+    $n = 0
+    foreach ($e in @(Get-VAFlapSettledEvents -Flaps $Flaps -Settings $Settings -Now $Now)) {
+        try { & $Send $e; $Flaps.Remove("$($e.fingerprint)"); $n++ }
+        catch { Write-VALog "Settled card not delivered, will retry: $($_.Exception.Message)" -Level Warning }
+    }
+    $n
+}
+
 function Get-VAFlapSettledEvents {
     <# Once per watch pass: flapping fingerprints quiet for settleMinutes get one "settled" card; stale entries go. #>
     param([Parameter(Mandatory)][System.Collections.IDictionary]$Flaps, [Parameter(Mandatory)]$Settings, [datetimeoffset]$Now = [datetimeoffset]::UtcNow)
@@ -68,11 +101,9 @@ function Get-VAFlapSettledEvents {
         $lastChange = @($e.changes | ForEach-Object { ConvertTo-VADate $_ } | Where-Object { $_ } | Sort-Object | Select-Object -Last 1)
         $lastChange = if ($lastChange) { $lastChange[0] } else { $null }
         $idle = if ($lastChange) { ($Now - $lastChange).TotalMinutes } else { [double]::MaxValue }
+        # The entry stays until the card is delivered (Send-VAFlapSettled removes it), so a failed send retries.
         if ($e.flapping) {
-            if ($idle -ge $Settings.Settle) {
-                $out.Add((New-VAFlapEvent -Entry $e -Fingerprint $fp -Settings $Settings -Now $Now -Settled))
-                $Flaps.Remove($fp)
-            }
+            if ($idle -ge $Settings.Settle) { $out.Add((New-VAFlapEvent -Entry $e -Fingerprint $fp -Settings $Settings -Now $Now -Settled)) }
         }
         elseif ($idle -ge $Settings.Within) { $Flaps.Remove($fp) }
     }

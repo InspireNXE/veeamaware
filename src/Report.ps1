@@ -688,6 +688,16 @@ function New-VARepositoryReport {
         -Facts @(New-VAFact 'Type' $Info.Type) -Timestamp ([datetimeoffset]::UtcNow)
 }
 
+function New-VAAnalyzerClearReport {
+    <# The "all clear" card: the latest analyzer run reports no violations. #>
+    param($LastRun)
+    $ok = Get-VAStatusInfo 'Success'
+    New-VAReport -Header 'Security & Compliance Analyzer' -Title 'All best-practice checks passing' -Status success -Icon $ok.Emoji `
+        -Label 'ALL CLEAR' -Summary @('no open findings') `
+        -Facts @(New-VAFact 'Run finished' (New-VATimePart (Get-VAProp $LastRun 'endTime' (Get-VAProp $LastRun 'creationTime')) 'R')) `
+        -Timestamp ([datetimeoffset]::UtcNow)
+}
+
 function New-VAAnalyzerReport {
     # -AllOpen: nothing was recorded before (e.g. results weren't readable on the first watch pass), so these
     # are the findings currently open, not new ones.

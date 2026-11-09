@@ -82,18 +82,20 @@ function Get-VADigestPeriod {
 
 function Get-VADigestOccurrence {
     <# The most recent scheduled time at or before $Now (local server time), as UTC. #>
-    param([Parameter(Mandatory)]$Digest, [Parameter(Mandatory)][datetimeoffset]$Now)
+    param([Parameter(Mandatory)]$Digest, [Parameter(Mandatory)][datetimeoffset]$Now, [TimeZoneInfo]$TimeZone = [TimeZoneInfo]::Local)
     $at = [timespan]::ParseExact("$(Get-VAProp $Digest 'schedule.at' '08:00')", 'hh\:mm', [cultureinfo]::InvariantCulture)
-    $local = $Now.ToLocalTime()
-    $candidate = [datetimeoffset]::new($local.Date + $at, $local.Offset)
-    if ("$(Get-VAProp $Digest 'schedule.every' 'day')" -eq 'week') {
+    $today = [TimeZoneInfo]::ConvertTime($Now, $TimeZone).Date
+    # Each candidate day gets its own UTC offset: the day before a clock change has a different one, and using
+    # today's would put yesterday's 08:00 an hour off (and send the digest twice when the clocks go back).
+    $on = { param([datetime]$d) $t = [datetime]::SpecifyKind($d + $at, 'Unspecified'); [datetimeoffset]::new($t, $TimeZone.GetUtcOffset($t)) }
+    $days = if ("$(Get-VAProp $Digest 'schedule.every' 'day')" -eq 'week') {
         $day = [System.DayOfWeek]"$(Get-VAProp $Digest 'schedule.day' 'Monday')"
-        $back = ([int]$candidate.DayOfWeek - [int]$day + 7) % 7
-        $candidate = $candidate.AddDays(-$back)
-        if ($candidate -gt $local) { $candidate = $candidate.AddDays(-7) }
+        $back = ([int]$today.DayOfWeek - [int]$day + 7) % 7
+        @($today.AddDays(-$back), $today.AddDays(-$back - 7))
     }
-    elseif ($candidate -gt $local) { $candidate = $candidate.AddDays(-1) }
-    return $candidate.ToUniversalTime()
+    else { @($today, $today.AddDays(-1)) }
+    foreach ($d in $days) { $c = & $on $d; if ($c -le $Now) { return $c.ToUniversalTime() } }
+    return (& $on $days[-1]).ToUniversalTime()
 }
 
 function Get-VADigestDue {
@@ -104,10 +106,10 @@ function Get-VADigestDue {
     or adding a digest does not post immediately; the first real digest covers the time since then. A long
     outage is capped at two periods.
     #>
-    param([Parameter(Mandatory)]$Digest, $LastRun, [Parameter(Mandatory)][datetimeoffset]$Now)
+    param([Parameter(Mandatory)]$Digest, $LastRun, [Parameter(Mandatory)][datetimeoffset]$Now, [TimeZoneInfo]$TimeZone = [TimeZoneInfo]::Local)
     $last = ConvertTo-VADate $LastRun
     if (-not $last) { return @{ Due = $false; Baseline = $true; From = $null; To = $Now } }
-    $occurrence = Get-VADigestOccurrence -Digest $Digest -Now $Now
+    $occurrence = Get-VADigestOccurrence -Digest $Digest -Now $Now -TimeZone $TimeZone
     if ($last -ge $occurrence) { return @{ Due = $false; Baseline = $false; From = $null; To = $Now } }
     $period = Get-VADigestPeriod $Digest
     $from = if (($Now - $last) -gt ($period + $period)) { $Now - $period } else { $last }
