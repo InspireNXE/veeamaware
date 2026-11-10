@@ -7,11 +7,12 @@
 #   tokenFile          DPAPI secret file (Set-VeeamAwareSecret.ps1) sent as "Authorization: Bearer <token>"
 #   signingSecretFile  DPAPI secret file used to sign each request (see below)
 #   timeoutSeconds     default 30
+#   allowHttp          true to allow plain http:// with a token or signing secret to a host that doesn't look local
 #
 # Headers on every request: X-VeeamAware-Event: <kind>, X-VeeamAware-Delivery: <event id>,
 # X-VeeamAware-Timestamp: <unix seconds>. With signingSecretFile, X-VeeamAware-Signature: sha256=<hex HMAC-SHA256
 # of "<timestamp>.<body>">; signing the timestamp lets a receiver refuse old (replayed) requests.
-# A target with a token or signing secret must use https://, except on the local network.
+# A target with a token or signing secret must use https://, except on the local network or with allowHttp.
 
 function Send-VAWebhookEvent {
     param([Parameter(Mandatory)]$Target, [Parameter(Mandatory)]$Event, $Context)
@@ -30,11 +31,15 @@ function Send-VAWebhookEvent {
 }
 
 function Test-VALocalUrl {
-    <# localhost, a private IPv4 address (10/8, 172.16/12, 192.168/16), a single-label name or a .local name. #>
+    <#
+    localhost, a private IPv4 address (10/8, 172.16/12, 192.168/16), a single-label name, a .local name, or an
+    IPv6 loopback, unique-local (fc00::/7) or link-local (fe80::/10) address.
+    #>
     param([string]$Url)
-    if ("$Url" -notmatch '^https?://(?:\[(?<h>[^\]]+)\]|(?<h>[^/:?#]+))') { return $false }
+    if ("$Url" -notmatch '^https?://(?:[^/@?#]*@)?(?:\[(?<v6>[^\]]+)\]|(?<h>[^/:?#]+))') { return $false }
+    if ($Matches['v6']) { return ($Matches['v6'].ToLowerInvariant() -match '^(::1$|f[cd][0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)') }
     $h = $Matches['h'].ToLowerInvariant()
-    if ($h -in 'localhost', '::1' -or $h -notmatch '\.' -or $h.EndsWith('.local')) { return $true }
+    if ($h -eq 'localhost' -or $h -notmatch '\.' -or $h.EndsWith('.local')) { return $true }
     if ($h -match '^(\d+)\.(\d+)\.\d+\.\d+$') {
         $a = [int]$Matches[1]; $b = [int]$Matches[2]
         return ($a -eq 10 -or $a -eq 127 -or ($a -eq 192 -and $b -eq 168) -or ($a -eq 172 -and $b -ge 16 -and $b -le 31))
@@ -55,8 +60,8 @@ Register-VATargetType -Type webhook -Description 'Generic JSON webhook (veeamawa
         param($Target, $Context)
         if ("$($Target.url)" -notmatch '^https?://') { 'url must start with http:// or https://.' }
         elseif ("$($Target.url)" -match '^http://' -and ((Get-VATargetOption $Target 'tokenFile' $null) -or (Get-VATargetOption $Target 'signingSecretFile' $null)) -and
-            -not (Test-VALocalUrl "$($Target.url)")) {
-            'url must use https:// when tokenFile or signingSecretFile is set (plain http:// is only allowed on the local network).'
+            -not (Test-VALocalUrl "$($Target.url)") -and -not [bool](Get-VATargetOption $Target 'allowHttp' $false)) {
+            'url must use https:// when tokenFile or signingSecretFile is set (plain http:// is only allowed on the local network; set "allowHttp": true to allow it anyway).'
         }
         if ("$(Get-VATargetOption $Target 'method' 'POST')" -notin 'POST', 'PUT') { 'method must be POST or PUT.' }
         foreach ($k in 'tokenFile', 'signingSecretFile') {

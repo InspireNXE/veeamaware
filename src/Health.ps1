@@ -423,8 +423,10 @@ function Update-VAStuckSessions {
             if ([int]$entry.t -gt 0) { $typical = [timespan]::FromSeconds([int]$entry.t) }
         }
         $limit = Get-VAStuckLimitHours $Settings "$($s.name)" $typical
+        # A sessions.jobs rule's hours apply as given; minHours is the floor for the guessed limits only.
+        $ruled = @(@(Get-VAProp $Settings 'jobs' @()) | Where-Object { $_ -and "$($s.name)" -like "$(Get-VAProp $_ 'job' '')" }).Count -gt 0
         $reason = $null
-        if ($limit -gt 0 -and $elapsed.TotalHours -ge [Math]::Max($limit, $minHours)) { $reason = 'long' }
+        if ($limit -gt 0 -and $elapsed.TotalHours -ge $(if ($ruled) { $limit } else { [Math]::Max($limit, $minHours) })) { $reason = 'long' }
         if (-not $reason -and $stallMinutes -gt 0 -and $prev -and $stalled.TotalMinutes -ge $stallMinutes) { $reason = 'stalled' }
         if ($reason) {
             $events.Add((New-VAStuckSessionEvent -Session $s -Reason $reason -Elapsed $elapsed -LimitHours $limit -Typical $typical -Stalled $stalled))

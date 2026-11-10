@@ -73,12 +73,13 @@ function New-VATargetContext {
 }
 
 function Get-VATargets {
-    param([Parameter(Mandatory)]$Config)
+    <# -IncludeDisabled: also targets with "enabled": false (to check that names other settings use exist). #>
+    param([Parameter(Mandatory)]$Config, [switch]$IncludeDisabled)
     $list = [System.Collections.Generic.List[object]]::new()
     foreach ($t in @(Get-VAProp $Config 'targets' @())) {
         if (-not $t) { continue }
         $h = if ($t -is [System.Collections.IDictionary]) { $t } else { ConvertTo-VAHashtable $t }
-        if ($h.Contains('enabled') -and -not $h.enabled) { continue }
+        if (-not $IncludeDisabled -and $h.Contains('enabled') -and -not $h.enabled) { continue }
         $list.Add($h)
     }
     # The top-level "discord" block is the target named "discord", alongside any Discord entries in "targets"
@@ -89,9 +90,10 @@ function Get-VATargets {
         param($t) $t.type -eq 'discord' -and "$(Get-VAProp $t 'webhookUrl')".TrimEnd('/') -eq "$(Get-VAProp $legacy 'webhookUrl')".TrimEnd('/') -and
         "$(Get-VAProp $t 'threadId')" -eq "$(Get-VAProp $legacy 'threadId')"
     }
-    if ($legacy -and "$(Get-VAProp $legacy 'webhookUrl')" -match '^https://' -and -not @($list | Where-Object { & $same $_ })) {
+    $legacyOn = $IncludeDisabled -or ($null -eq (Get-VAProp $legacy 'enabled')) -or [bool](Get-VAProp $legacy 'enabled')
+    if ($legacy -and $legacyOn -and "$(Get-VAProp $legacy 'webhookUrl')" -match '^https://' -and -not @($list | Where-Object { & $same $_ })) {
         $d = ConvertTo-VAHashtable $legacy
-        $d.type = 'discord'; $d.name = 'discord'
+        $d.type = 'discord'; $d.name = 'discord'; $d._legacy = $true
         $list.Insert(0, $d)
     }
     return $list.ToArray()   # unrolled so callers can pipe it; wrap in @() when a count is needed
@@ -116,33 +118,43 @@ function Get-VATargetOption {
     return $Default
 }
 
-function Test-VATargetConfig {
+function Get-VATargetIssues {
+    <# Every target problem as @{ Target; Message }. Target is the offending target, or $null for global ones. #>
     param([Parameter(Mandatory)]$Config)
-    $errors = [System.Collections.Generic.List[string]]::new()
-    foreach ($e in $script:VAPluginErrors) { $errors.Add("Target plugin failed to load: $e") }
+    $issues = [System.Collections.Generic.List[object]]::new()
+    $add = { param($t, $m) $issues.Add([pscustomobject]@{ Target = $t; Message = $m }) }
+    foreach ($e in $script:VAPluginErrors) { & $add $null "Target plugin failed to load: $e" }
     $targets = @(Get-VATargets $Config)
-    if (-not $targets.Count) { $errors.Add('No notification target configured: set discord.webhookUrl or add an entry to "targets".') }
+    if (-not $targets.Count) { & $add $null 'No notification target configured: set discord.webhookUrl or add an entry to "targets".' }
     $names = @{}
     $ctx = New-VATargetContext -Config $Config
     foreach ($t in $targets) {
         $n = "$($t.name)"
-        if (-not $n) { $errors.Add("A target of type '$($t.type)' has no name."); continue }
+        if (-not $n) { & $add $t "A target of type '$($t.type)' has no name."; continue }
         if ($names.ContainsKey($n)) {
-            $errors.Add("Duplicate target name '$n'.$(if ($n -eq 'discord') { ' The top-level "discord" block is the target named "discord"; give the other Discord target its own name.' })")
+            & $add $t "Duplicate target name '$n'.$(if ($n -eq 'discord') { ' The top-level "discord" block is the target named "discord"; give the other Discord target its own name.' })"
+            continue
         }
         $names[$n] = $true
-        if ("$(Get-VATargetOption $t 'minSeverity' 'info')" -notin 'info', 'success', 'warning', 'critical') { $errors.Add("Target '$n': minSeverity must be info, warning or critical.") }
+        $bad = [System.Collections.Generic.List[string]]::new()
+        if ("$(Get-VATargetOption $t 'minSeverity' 'info')" -notin 'info', 'success', 'warning', 'critical') { $bad.Add("Target '$n': minSeverity must be info, warning or critical.") }
         $type = Get-VATargetType "$($t.type)"
         if (-not $type) {
             $known = (Get-VATargetType | ForEach-Object Type) -join ', '
-            $errors.Add("Target '$n': unknown type '$($t.type)' (available: $known)."); continue
+            $bad.Add("Target '$n': unknown type '$($t.type)' (available: $known).")
         }
-        if ($type.Validate) {
-            try { foreach ($msg in @(& $type.Validate $t $ctx)) { if ($msg) { $errors.Add("Target '$n': $msg") } } }
-            catch { $errors.Add("Target '$n': validation failed: $($_.Exception.Message)") }
+        elseif ($type.Validate) {
+            try { foreach ($msg in @(& $type.Validate $t $ctx)) { if ($msg) { $bad.Add("Target '$n': $msg") } } }
+            catch { $bad.Add("Target '$n': validation failed: $($_.Exception.Message)") }
         }
+        foreach ($m in $bad) { & $add $t $m }
     }
-    return $errors
+    return $issues.ToArray()
+}
+
+function Test-VATargetConfig {
+    param([Parameter(Mandatory)]$Config)
+    @(Get-VATargetIssues $Config | ForEach-Object Message)
 }
 
 function Test-VATargetWants {
@@ -222,9 +234,11 @@ function Format-VASafeUrl {
     path (no secrets there), never the query.
     #>
     param([AllowNull()][string]$Url)
-    if ("$Url" -notmatch '^(?<base>https?://(?<host>[^/?#:]+)(?::\d+)?)(?<path>/[^?#]*)?') { return '(url)' }
-    if ($Matches['host'] -in 'localhost', '127.0.0.1', '::1') { return "$($Matches['base'])$($Matches['path'])" }
-    "$($Matches['base'])/…"
+    # Any user:password@ part is dropped; an IPv6 host keeps its brackets.
+    if ("$Url" -notmatch '^(?<scheme>https?://)(?:[^/@?#]*@)?(?<hp>(?<host>\[[^\]]+\]|[^/?#:]+)(?::\d+)?)(?<path>/[^?#]*)?') { return '(url)' }
+    $base = "$($Matches['scheme'])$($Matches['hp'])"
+    if ($Matches['host'] -in 'localhost', '127.0.0.1', '[::1]') { return "$base$($Matches['path'])" }
+    "$base/…"
 }
 
 function Hide-VAUrlSecret {

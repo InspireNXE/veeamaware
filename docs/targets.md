@@ -15,6 +15,8 @@ A target is somewhere VeeamAware sends notifications. The installer adds and rem
 
 The top-level `discord` block in the config is the target named `discord`. Every other target goes under `"targets": [...]`. The examples in `config.example.json` ship disabled.
 
+A target with a setting that can't work (a bad URL, an unknown type, a missing secret file, a plugin that didn't load, the example's `replace-me` URL) is skipped and logged as a warning on every run; the other targets keep working. The same goes for a digest that names a target that doesn't exist. Only a config with no usable target at all stops VeeamAware. `Test-VeeamAwareTarget.ps1` and the installer show these warnings too.
+
 ## Options for every target
 
 | Option | Default | Notes |
@@ -23,7 +25,7 @@ The top-level `discord` block in the config is the target named `discord`. Every
 | `kinds` | `["*"]` | Any of `session`, `malware`, `repository`, `analyzer`, `authorization`, `health`, `digest` |
 | `includeResolved` | `true` | Send "problem cleared" events |
 | `includeDeferred` | `false` | Also send sessions that routing sends to the digest, as they finish |
-| `enabled` | `true` | |
+| `enabled` | `true` | Also works on the top-level `discord` block |
 
 ## More than one channel
 
@@ -85,7 +87,7 @@ Each request's body is one event (`veeamaware.event/v1`):
 - `status`, `title`, `text` (plain) and `markdown`
 - `fingerprint`: a stable key for "the same problem", e.g. `vbr/<server>/job/<jobId>`
 - `resolved`, `deferred`, `occurredAt` and `source`
-- `details`: structured data such as per-object results, byte counts and repository space
+- `details`: structured data such as per-object results, byte counts and repository space. Cards sent by the preview and sample tools have `details.sample: true` and a fingerprint starting with `sample:`, so they never open or close a real incident.
 - `report`: the neutral layout that chat targets render (`veeamaware.report/v1`). It can be `null`.
 
 ### Headers
@@ -95,7 +97,7 @@ Each request's body is one event (`veeamaware.event/v1`):
 - `X-VeeamAware-Timestamp: <unix seconds>` on every request.
 - `X-VeeamAware-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<raw body>">` with `signingSecretFile`. To verify, recompute it from the timestamp header, a dot and the raw body, compare in constant time, and refuse requests whose timestamp is more than about 5 minutes old. That stops replays.
 
-A target with `tokenFile` or `signingSecretFile` must use `https://`. Plain `http://` is only accepted on the local network: `localhost`, private IPv4 addresses, single-label names and `.local` names.
+A target with `tokenFile` or `signingSecretFile` must use `https://`. Plain `http://` is only accepted on the local network: `localhost`, private IPv4 addresses, IPv6 loopback, unique-local (`fc00::/7`) and link-local addresses, single-label names and `.local` names. For any other host (an internal name such as `hooks.corp.example`), set `"allowHttp": true` on the target to allow it anyway. Otherwise the target is skipped with a warning.
 
 Deliveries are retried on 429 and 5xx, and one failing target never blocks the others.
 

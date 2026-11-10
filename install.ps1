@@ -97,6 +97,7 @@ Write-Host "VeeamAware $label -> $Path"
 $work = Join-Path ([IO.Path]::GetTempPath()) ("veeamaware-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $work | Out-Null
 $watchTask = $null
+$copied = $false
 try {
     $zip = Join-Path $work 'release.zip'
     Invoke-WebRequest -Uri $zipUrl -OutFile $zip -Headers @{ 'User-Agent' = 'VeeamAware-installer' } -UseBasicParsing
@@ -106,9 +107,14 @@ try {
     $src = $src.FullName
 
     # 3. Copy, keeping the user's files ---------------------------------------------------------------------
-    # Pause the watcher so it doesn't load a half-copied module.
+    # Pause the watcher so it doesn't load a half-copied module. A task someone switched off stays off: it is
+    # left alone here, and the installer is told (VEEAMAWARE_WATCH_PAUSED) which of the two it is.
     $watchTask = Get-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' -ErrorAction SilentlyContinue
-    if ($watchTask) { $watchTask | Disable-ScheduledTask | Out-Null; Stop-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' -ErrorAction SilentlyContinue }
+    if ($watchTask -and "$($watchTask.State)" -eq 'Disabled') { $watchTask = $null }
+    if ($watchTask) {
+        $watchTask | Disable-ScheduledTask | Out-Null; Stop-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' -ErrorAction SilentlyContinue
+        $env:VEEAMAWARE_WATCH_PAUSED = '1'
+    }
 
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path | Out-Null }
     # The watcher runs this code as SYSTEM, and C:\ lets any user modify new folders: lock the folder down
@@ -116,10 +122,19 @@ try {
     & icacls.exe $Path /setowner '*S-1-5-32-544' /C /Q | Out-Null
     & icacls.exe $Path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /C /Q | Out-Null
     if ($LASTEXITCODE) { throw "Could not set permissions on $Path (icacls $LASTEXITCODE)" }
-    $rc =@('/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:2')
+    $rc = @('/NFL', '/NDL', '/NJH', '/NJS', '/NP', '/R:2', '/W:2')
+    # The module (src) is staged next to the old one and swapped in by renaming, so a copy that fails part-way
+    # leaves the old module whole instead of half old, half new.
+    $srcNew = Join-Path $Path 'src.new'; $srcOld = Join-Path $Path 'src.old'
+    foreach ($d in $srcNew, $srcOld) { if (Test-Path $d) { Remove-Item $d -Recurse -Force } }
+    robocopy (Join-Path $src 'src') $srcNew /MIR @rc | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Copy of src failed (robocopy $LASTEXITCODE)" }
     robocopy $src $Path /XF '.gitignore' '.gitattributes' @rc | Out-Null                          # top-level files
     if ($LASTEXITCODE -ge 8) { throw "Copy failed (robocopy $LASTEXITCODE)" }
-    foreach ($dir in 'src', 'assets', 'docs', 'tests', 'tools') {                                    # ours: mirror
+    if (Test-Path (Join-Path $Path 'src')) { Rename-Item (Join-Path $Path 'src') 'src.old' }
+    Rename-Item $srcNew 'src'
+    Remove-Item $srcOld -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($dir in 'assets', 'docs', 'tests', 'tools') {                                           # ours: mirror
         if (Test-Path (Join-Path $src $dir)) {
             robocopy (Join-Path $src $dir) (Join-Path $Path $dir) /MIR @rc | Out-Null
             if ($LASTEXITCODE -ge 8) { throw "Copy of $dir failed (robocopy $LASTEXITCODE)" }
@@ -133,13 +148,17 @@ try {
     Copy-Item (Join-Path $src 'config\config.example.json') (Join-Path $Path 'config\config.example.json') -Force
     Copy-Item (Join-Path $src 'plugins\targets\README.md') (Join-Path $Path 'plugins\targets\README.md') -Force -ErrorAction SilentlyContinue
     Get-ChildItem $Path -Recurse -File -Include '*.ps1', '*.psm1', '*.psd1' | Unblock-File
+    $copied = $true
 }
 catch {
-    # Don't leave monitoring switched off: the watcher is what would tell anyone something is wrong.
-    if ($watchTask) { $watchTask | Enable-ScheduledTask | Out-Null }
+    if ((Test-Path (Join-Path $Path 'src.old')) -and -not (Test-Path (Join-Path $Path 'src'))) { Rename-Item (Join-Path $Path 'src.old') 'src' }
+    Write-Warning "The update stopped part-way. Run it again to finish; the watcher keeps running meanwhile."
     throw
 }
 finally {
+    # Don't leave monitoring switched off (a failure, or Ctrl+C, which skips catch): the watcher is what would
+    # tell anyone something is wrong. On success the installer below turns it back on.
+    if ($watchTask -and -not $copied) { $watchTask | Enable-ScheduledTask | Out-Null }
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -148,7 +167,14 @@ $installArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path
 if ($channelGiven) { $installArgs += @('-Channel', $Channel) }
 if ($Update) { $installArgs += '-Update' }
 $installArgs += $InstallerArguments
-& $pwsh @installArgs
-$code = $LASTEXITCODE
-if ($watchTask -and $code) { $watchTask | Enable-ScheduledTask | Out-Null }   # the installer re-enables it on success
+$code = $null
+try {
+    & $pwsh @installArgs
+    $code = $LASTEXITCODE
+}
+finally {
+    # The installer turns the watcher back on when it succeeds; on a failure or Ctrl+C, do it here.
+    if ($watchTask -and $code -ne 0) { $watchTask | Enable-ScheduledTask | Out-Null }
+    Remove-Item Env:\VEEAMAWARE_WATCH_PAUSED -ErrorAction SilentlyContinue
+}
 if ($code) { throw "Install-VeeamAware.ps1 exited with $code" }

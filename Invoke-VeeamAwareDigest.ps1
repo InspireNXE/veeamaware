@@ -23,6 +23,7 @@ Import-Module (Join-Path $PSScriptRoot 'src\VeeamAware.psm1') -Force
 $cfgArgs = @{}; if ($ConfigPath) { $cfgArgs.Path = $ConfigPath }
 $config = Get-VAConfig @cfgArgs
 Initialize-VALog -Name 'digest' -Level $config.logging.level -RetentionDays $config.logging.retentionDays
+Write-VAConfigWarnings
 
 $now = [datetimeoffset]::UtcNow
 $state = Read-VAState
@@ -113,7 +114,7 @@ try {
             if (& $wantsSection $d 'agents') {
                 $agentSummaries = @(foreach ($s in $agentSessions) {
                         $id = "$($s.id)"
-                        if (-not $taskCache.ContainsKey($id)) { $taskCache[$id] = @(Test-VARestOptional -What "task sessions of $id" { Get-VATaskSessions $id }) }
+                        if (-not $taskCache.ContainsKey($id)) { $taskCache[$id] = @(Test-VARestOptional -What "task sessions of $id" { Get-VATaskSessions $id } | Where-Object { $_ }) }
                         Get-VASessionSummary -Session $s -TaskSessions $taskCache[$id]
                     })
                 & $lap "agent task sessions ($($agentSessions.Count))"
@@ -126,14 +127,23 @@ try {
                 $dv = $violations
             }
             $shownOther = if (& $wantsSection $d 'jobs') { $otherSessions } else { @() }
-            if ((Get-VAProp $d 'skipWhenEmpty' $false) -and -not ($agentSummaries.Count + $shownOther.Count + $malware.Count)) {
+            $prevDv = if ($state.digestAnalyzer.Contains($run.Name)) { [int]$state.digestAnalyzer[$run.Name] } else { -1 }
+            # "Empty" means nothing at all to say: no sessions, no malware, no repository low or offline, and no
+            # change in the analyzer's findings.
+            $repoIssues = if (& $wantsSection $d 'repositories') {
+                @($repos | Where-Object { (Get-VARepositoryLevel $_ $config.watch.repositories) -ne 'ok' }).Count
+            }
+            else { 0 }
+            $analyzerNews = $dv -gt 0 -and $dv -ne $prevDv
+            $skipped = (Get-VAProp $d 'skipWhenEmpty' $false) -and -not ($agentSummaries.Count + $shownOther.Count + $malware.Count + $repoIssues) -and -not $analyzerNews
+            if ($skipped) {
                 Write-VALog "Digest '$($run.Name)': nothing to report, skipped (skipWhenEmpty)"
             }
             else {
                 $report = New-VADigestReport -Config $config -Digest $d -From $run.From -To $run.To -AgentSummaries $agentSummaries `
                     -OtherSessions $shownOther -Repositories $(if (& $wantsSection $d 'repositories') { $repos } else { @() }) `
                     -MalwareEvents $malware -AnalyzerViolations $dv -HistorySessions $historySessions -HistoryDays $historyDays `
-                    -PreviousAnalyzerViolations $(if ($state.digestAnalyzer.Contains($run.Name)) { [int]$state.digestAnalyzer[$run.Name] } else { -1 })
+                    -PreviousAnalyzerViolations $prevDv
                 if ($null -eq $updateNote) {
                     # Once per run; Get-VAUpdateInfo caches GitHub's answer for 12 hours and never throws.
                     $updateNote = ''
@@ -168,7 +178,7 @@ try {
             }
             if (-not $WhatIf -and -not $Hours -and -not $Target) {   # test runs leave the schedule alone
                 Set-VADigestLastRun -Name $run.Name -At $run.To
-                if ($dv -ge 0) { Update-VAState { param($s) $s.digestAnalyzer[$run.Name] = $dv } | Out-Null }
+                if ($dv -ge 0 -and -not $skipped) { Update-VAState { param($s) $s.digestAnalyzer[$run.Name] = $dv } | Out-Null }
             }
         }
         catch {

@@ -32,7 +32,7 @@ $realName = $env:COMPUTERNAME
 $env:COMPUTERNAME = 'VBR-01'
 try {
     $config = if ($Send) { $a = @{}; if ($ConfigPath) { $a.Path = $ConfigPath }; Get-VAConfig @a } else { Get-VADefaultConfig }
-    if ($Send) { Initialize-VALog -Name 'samples' -Level $config.logging.level -RetentionDays $config.logging.retentionDays }
+    if ($Send) { Initialize-VALog -Name 'samples' -Level $config.logging.level -RetentionDays $config.logging.retentionDays; Write-VAConfigWarnings }
 
     # Times are pinned to this morning, local time, so the samples read the same every time they are rebuilt.
     $now = [datetimeoffset](Get-Date).Date.AddHours(8).AddMinutes(14)   # local, like the digest's day buckets
@@ -151,7 +151,7 @@ try {
         # Alerts stamp themselves with the real time; keep them on the samples' morning.
         if ($evt.report -and (ConvertTo-VADate $evt.report.timestamp) -gt $now) { $evt.report.timestamp = $now.ToString('o') }
         if ($Send) {
-            $evt.title = "[Sample] $($evt.title)"
+            $evt = Set-VASampleEvent $evt -Label Sample
             $n = Send-VAEvent -Config $config -Event $evt -OnlyTargets $Target
             Write-Host ("{0,-11} -> {1} target(s)" -f $c, $n)
             continue

@@ -164,10 +164,77 @@ function Get-VAConfig {
     elseif ($Path) {
         throw "Config file not found: $Path. Run Install-VeeamAware.ps1 or copy config\config.example.json."
     }
-    $errors = @(Test-VAConfig $config | Where-Object { -not ($AllowNoTargets -and $_ -like 'No notification target configured*') })
-    if ($errors) { throw ("Invalid configuration:`n - " + ($errors -join "`n - ")) }
+    # A broken target (bad URL, unknown type, plugin that didn't load) or a digest naming a missing target only
+    # sets that target aside: failing the whole config here would stop every alert, the stale-watcher check
+    # included, before anything is even logged. The scripts log these warnings once their log is open.
+    $warnings = @(@(Repair-VAConfigValues -Config $config -Default (Get-VADefaultConfig)) + @(Set-VAInvalidTargetsAside $config))
+    $soft = @(Test-VADigestTargetNames $config)
+    $errors = @(Test-VAConfig $config | Where-Object { $_ -notin $soft -and $_ -notin $warnings -and -not ($AllowNoTargets -and $_ -like 'No notification target configured*') })
+    $script:VAConfigWarnings = @($warnings + $soft | Where-Object { $_ })
+    if ($errors) { throw ("Invalid configuration:`n - " + (@($script:VAConfigWarnings + $errors) -join "`n - ")) }
     $script:VAActiveConfig = $config   # display settings (badges, ANSI) for embed builders that take no -Config
     return $config
+}
+
+function Repair-VAConfigValues {
+    <#
+    Puts back the default for a setting whose value can't work (text where a number belongs, an unknown log
+    level), returning a warning for each. Otherwise the [int] cast or the logger's ValidateSet would throw in
+    every script, after validation said the file was fine.
+    #>
+    param([Parameter(Mandatory)]$Config, [Parameter(Mandatory)]$Default, [string]$Prefix = '')
+    foreach ($k in @($Default.Keys)) {
+        if (-not $Config.Contains($k)) { continue }
+        $d = $Default[$k]; $v = $Config[$k]; $path = "$Prefix$k"
+        if ($d -is [System.Collections.IDictionary]) {
+            if ($v -is [System.Collections.IDictionary]) { Repair-VAConfigValues -Config $v -Default $d -Prefix "$path." }
+            continue
+        }
+        if (($d -is [int] -or $d -is [long] -or $d -is [double]) -and $null -ne $v -and -not ($v -is [bool])) {
+            $n = 0.0
+            if (-not [double]::TryParse("$v", [System.Globalization.NumberStyles]::Float, [cultureinfo]::InvariantCulture, [ref]$n)) {
+                $Config[$k] = $d
+                "$path must be a number (got '$v'); using $d."
+            }
+        }
+    }
+    if (-not $Prefix -and $Config.logging -is [System.Collections.IDictionary] -and "$($Config.logging.level)" -notin 'Debug', 'Info', 'Warning', 'Error') {
+        $was = $Config.logging.level; $Config.logging.level = 'Info'
+        "logging.level must be Debug, Info, Warning or Error (got '$was'); using Info."
+    }
+}
+
+function Set-VAInvalidTargetsAside {
+    <#
+    Disables (in memory) every target with a configuration problem and returns one warning per problem.
+    Targets become hashtables here so the flag sticks; the top-level "discord" block gets enabled = false.
+    #>
+    param([Parameter(Mandatory)]$Config)
+    $Config['targets'] = @(@(Get-VAProp $Config 'targets' @()) | Where-Object { $_ } | ForEach-Object {
+            if ($_ -is [System.Collections.IDictionary]) { $_ } else { ConvertTo-VAHashtable $_ } })
+    foreach ($issue in @(Get-VATargetIssues $Config)) {
+        $t = $issue.Target
+        if ($null -eq $t) {
+            if ($issue.Message -like 'No notification target configured*') { continue }   # nothing to set aside
+            "$($issue.Message)"; continue
+        }
+        if ($t.Contains('_legacy') -and $t._legacy) {
+            if ($Config.discord -is [System.Collections.IDictionary]) { $Config.discord['enabled'] = $false }
+            else { $Config.discord | Add-Member enabled $false -Force }
+        }
+        else { $t['enabled'] = $false }
+        "$($issue.Message) This target is skipped until it is fixed."
+    }
+}
+
+function Get-VAConfigWarnings {
+    <# Problems the last Get-VAConfig worked around (a target set aside, a digest naming a missing target). #>
+    if (Get-Variable -Name VAConfigWarnings -Scope Script -ErrorAction SilentlyContinue) { @($script:VAConfigWarnings | Where-Object { $_ }) }
+}
+
+function Write-VAConfigWarnings {
+    <# Logs what Get-VAConfig worked around; the scripts call this right after Initialize-VALog. #>
+    foreach ($w in @(Get-VAConfigWarnings)) { Write-VALog "Configuration: $w" -Level Warning }
 }
 
 function Get-VAConfigMigrations {

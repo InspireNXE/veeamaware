@@ -389,15 +389,21 @@ if ($changed -or $jsonAfter -ne $jsonBefore) {
 else { Write-VAHint 'Settings unchanged.' }
 $config = Get-VAConfig -Path $configPath -AllowNoTargets
 foreach ($m in @(Get-VAConfigMigrations)) { Write-VAHint "Config: $m" }
+foreach ($w in @(Get-VAConfigWarnings)) { Write-VAWarn "Config: $w" }
 
 # 2. Folders and permissions --------------------------------------------------------------------------------
 # The whole folder: the watcher runs this code as SYSTEM, and a folder under C:\ is writable by any user by
 # default. SYSTEM and Administrators full, Users read; Administrators own it. Then reset what's under it (except
-# the folders below, which get their own) so everything inherits that.
+# the folders below, which get their own) so everything inherits that. Ownership goes to Administrators all the
+# way down: whoever owns a file can change its permissions back, so a file someone planted on an install from
+# before 0.1.2 would keep its owner's access. A git checkout's .git folder is left alone.
 & icacls.exe $root /setowner '*S-1-5-32-544' /C /Q | Out-Null
+foreach ($item in @(Get-ChildItem -LiteralPath $root -Force | Where-Object { $_.Name -ne '.git' })) {
+    & icacls.exe $item.FullName /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+}
 & icacls.exe $root /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-32-545:(OI)(CI)RX' /C /Q | Out-Null
 if ($LASTEXITCODE) { Write-VAWarn "icacls failed on $root (exit $LASTEXITCODE). Any user may be able to change VeeamAware's code." }
-foreach ($item in @(Get-ChildItem -LiteralPath $root -Force | Where-Object { $_.Name -notin 'config', 'secrets', 'state', 'logs', 'plugins' })) {
+foreach ($item in @(Get-ChildItem -LiteralPath $root -Force | Where-Object { $_.Name -notin 'config', 'secrets', 'state', 'logs', 'plugins', '.git' })) {
     & icacls.exe $item.FullName /reset /T /C /Q | Out-Null
 }
 foreach ($dir in 'config', 'secrets', 'state', 'logs', 'plugins') {
@@ -448,9 +454,17 @@ if (-not $SkipTasks) {
         -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $root 'Invoke-VeeamAwareWatch.ps1')`""
     $minutes = [Math]::Max(1, [int](Get-VAProp $config 'watch.intervalMinutes' 5))
     $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes $minutes)
+    # An update keeps a task that was switched off on purpose switched off. install.ps1 pauses it while it copies
+    # and says so in VEEAMAWARE_WATCH_PAUSED; that pause is undone here.
+    $existing = Get-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' -ErrorAction SilentlyContinue
+    $keepOff = $Update -and $existing -and "$($existing.State)" -eq 'Disabled' -and -not $env:VEEAMAWARE_WATCH_PAUSED
     Register-ScheduledTask -TaskName 'VeeamAware Watch' -TaskPath '\VeeamAware\' -Action $action -Trigger $trigger `
         -Principal $principal -Settings $settings -Force | Out-Null
-    Enable-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' | Out-Null
+    if ($keepOff) {
+        Disable-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' | Out-Null
+        Write-VAWarn 'The "VeeamAware Watch" task was switched off before this update and stays off. Enable it in Task Scheduler to turn monitoring back on.'
+    }
+    else { Enable-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' | Out-Null }
     Write-VADone "Scheduled task \VeeamAware\VeeamAware Watch: every $minutes min (also sends the digests)."
 
     # Pre-release builds had a separate digest task; the watcher runs digests now, so the old task would send them twice.
@@ -459,7 +473,7 @@ if (-not $SkipTasks) {
         Write-VADone 'Removed the old "VeeamAware Digest" task (the watcher sends digests now).'
     }
     # First pass records existing malware events and analyzer results as a baseline instead of posting them.
-    Start-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' -ErrorAction SilentlyContinue
+    if (-not $keepOff) { Start-ScheduledTask -TaskPath '\VeeamAware\' -TaskName 'VeeamAware Watch' -ErrorAction SilentlyContinue }
 }
 
 # 6. Jobs ---------------------------------------------------------------------------------------------------

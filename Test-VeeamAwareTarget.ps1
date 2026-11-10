@@ -23,13 +23,19 @@ if ($ListTypes) {
 
 $cfgArgs = @{}; if ($ConfigPath) { $cfgArgs.Path = $ConfigPath }
 $config = Get-VAConfig @cfgArgs
+foreach ($w in @(Get-VAConfigWarnings)) { Write-Host "[warn] $w" -ForegroundColor Yellow }
 $failed = 0
+$chosen = @(Get-VATargets $config | Where-Object { -not $Target -or $Target -contains $_.name })
+$unknown = @($Target | Where-Object { $_ -and $_ -notin @(Get-VATargets $config | ForEach-Object { "$($_.name)" }) })
+foreach ($u in $unknown) { Write-Host "  No enabled target named '$u'." -ForegroundColor Red; $failed++ }
+if (-not $chosen.Count -and -not $unknown.Count) { Write-Host '  No targets to test.' -ForegroundColor Yellow }
 
-foreach ($t in (Get-VATargets $config | Where-Object { -not $Target -or $Target -contains $_.name })) {
+foreach ($t in $chosen) {
     try {
         $out = @(Test-VATarget -Config $config -Target $t -SourceText $SourceText -WhatIf:$WhatIf)
         if ($WhatIf) { Write-Host "----- $($t.type) target '$($t.name)' would receive:"; $out | ForEach-Object { Write-Host $_ } }
-        Write-Host "  Sent a test message to $($t.type) target '$($t.name)'." -ForegroundColor Green
+        if ($WhatIf) { Write-Host "  Built a test message for $($t.type) target '$($t.name)' (WhatIf: nothing sent)." -ForegroundColor Green }
+        else { Write-Host "  Sent a test message to $($t.type) target '$($t.name)'." -ForegroundColor Green }
     }
     catch {
         $failed++

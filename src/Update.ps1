@@ -73,8 +73,8 @@ function Get-VAUpdateInfo {
 
     $cache = $null
     if (-not $Force) {
-        $st = Read-VAState
-        $cache = $st['update']
+        $st = try { Read-VAState } catch { $null }   # no cache then; asking GitHub again is harmless
+        $cache = if ($st) { $st['update'] }
         $fresh = $cache -and "$($cache['channel'])" -eq $s.Channel -and "$($cache['repository'])" -eq $s.Repository -and
             ($t = ConvertTo-VADate $cache['checkedUtc']) -and ([datetimeoffset]::UtcNow - $t).TotalHours -lt 12
         if (-not $fresh) { $cache = $null }

@@ -42,7 +42,8 @@ function Read-VAState {
         $text = $null
         for ($i = 1; $null -eq $text; $i++) {
             try { $text = [System.IO.File]::ReadAllText($script:VAStatePath) }
-            catch [System.IO.IOException] {
+            catch [System.IO.IOException], [System.UnauthorizedAccessException] {
+                # Locked by another process, or briefly "access denied" while another process replaces it.
                 if ($i -ge 5) { throw "Can't read $($script:VAStatePath): $($_.Exception.Message)" }
                 Start-Sleep -Milliseconds (200 * $i)
             }

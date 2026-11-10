@@ -22,6 +22,7 @@ Import-Module (Join-Path $PSScriptRoot '..\src\VeeamAware.psm1') -Force
 $cfgArgs = @{}; if ($ConfigPath) { $cfgArgs.Path = $ConfigPath }
 $config = Get-VAConfig @cfgArgs
 Initialize-VALog -Name 'preview' -Level $config.logging.level -RetentionDays $config.logging.retentionDays
+Write-VAConfigWarnings
 
 $now = [datetimeoffset]::UtcNow
 $iso = { param($minutesAgo) $now.AddMinutes(-$minutesAgo).UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'") }
@@ -49,7 +50,7 @@ $build = @{
 $sent = 0
 foreach ($c in $Card) {
     $evt = & $build[$c]
-    $evt.title = "[Preview] $($evt.title)"
+    $evt = Set-VASampleEvent $evt -Label Preview
     $n = Send-VAEvent -Config $config -Event $evt -OnlyTargets $Target -WhatIf:$WhatIf
     Write-Host ("{0,-17} -> {1} target(s)" -f $c, $n)
     $sent += $n

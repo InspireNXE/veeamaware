@@ -143,14 +143,17 @@ function ConvertTo-VATeamsCard {
     $body.Add([ordered]@{ type = 'Container'; style = $style.Container; bleed = $true; items = $band })
 
     if (@($r.quotes).Count) {
-        $q = foreach ($x in $r.quotes) {
+        # Capped like the section rows: a night where every job fails would otherwise go over Teams' size limit.
+        $allQuotes = @($r.quotes)
+        $q = @(foreach ($x in ($allQuotes | Select-Object -First $MaxItems)) {
             if ($x['title']) {
                 $p = Format-VATeamsParts $x['parts']
                 New-VATeamsText "$(if ($x['icon']) { "$($x['icon']) " })**$($x['title'])**$(if ($p) { " $p" })" -Spacing Small
                 if ($x['text']) { New-VATeamsText "$($x['text'])" -Spacing None -Size $(if ($x['parts']) { 'Small' }) -Subtle:([bool]$x['parts']) }
             }
             else { New-VATeamsText "$(if ($x['icon']) { "$($x['icon']) " })$($x['text'])" -Spacing Small }
-        }
+        })
+        if ($allQuotes.Count -gt $MaxItems) { $q += New-VATeamsText "…and $($allQuotes.Count - $MaxItems) more" -Size Small -Subtle -Spacing Small }
         $body.Add([ordered]@{ type = 'Container'; style = 'emphasis'; items = @($q) })
     }
 
@@ -279,6 +282,7 @@ Register-VATargetType -Type teams -Description 'Microsoft Teams channel (Workflo
     -Validate {
         param($Target, $Context)
         if ("$($Target.url)" -notmatch '^https://') { 'url must be the https:// webhook URL from the Teams Workflows app.' }
+        elseif (Test-VAPlaceholderUrl "$($Target.url)") { 'url is still the example placeholder (replace-me); paste the real webhook URL.' }
     } `
     -Wants { param($Target, $Event) $null -ne $Event.report } `
     -Send { param($Target, $Event, $Context) Send-VATeamsEvent -Target $Target -Event $Event -Context $Context }

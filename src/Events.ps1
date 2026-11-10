@@ -63,6 +63,22 @@ function ConvertTo-VAEventJson {
     return ($copy | ConvertTo-Json -Depth 12 -Compress)
 }
 
+function Set-VASampleEvent {
+    <#
+    Marks an event built by a preview or sample tool so nobody mistakes it for a real alert: "[Label]" on the
+    event and on the card title, no mentions (no one gets paged), a "sample:" fingerprint so a webhook receiver
+    can't open or close a real incident with it, and details.sample = true.
+    #>
+    param([Parameter(Mandatory)]$Event, [string]$Label = 'Sample')
+    $Event.title = "[$Label] $($Event.title)"
+    if ($Event.report) { $Event.report.title = "[$Label] $($Event.report.title)" }
+    $Event.mention = $null
+    if ($Event.Contains('mentionExtra')) { $Event.Remove('mentionExtra') }
+    if ($Event.fingerprint) { $Event.fingerprint = "sample:$($Event.fingerprint)" }
+    if ($Event.details -is [System.Collections.IDictionary]) { $Event.details['sample'] = $true }
+    $Event
+}
+
 function Get-VAResultSeverity {
     param([string]$Result)
     switch -Regex ($Result) { '^Success' { 'success' } '^Warning' { 'warning' } '^Fail' { 'critical' } default { 'info' } }

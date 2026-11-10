@@ -151,7 +151,6 @@ function Test-VARoutingConfig {
         }
     }
     $names = @{}
-    $targets = @(Get-VATargets $Config | ForEach-Object { "$($_.name)" })
     $i = 0
     foreach ($d in @(Get-VADigests $Config -IncludeDisabled)) {
         $i++
@@ -170,11 +169,27 @@ function Test-VARoutingConfig {
         foreach ($s in @(Get-VAProp $d 'sections' $script:VADigestSections)) {
             if ($s -notin $script:VADigestSections) { $errors.Add("${label}: unknown section '$s' (use $($script:VADigestSections -join ', ')).") }
         }
+    }
+    foreach ($e in (Test-VADigestTargetNames $Config)) { $errors.Add($e) }
+    return $errors
+}
+
+function Test-VADigestTargetNames {
+    <#
+    Digest "targets" that name no configured target. A target that is only switched off ("enabled": false) is
+    fine: the digest just skips it. Get-VAConfig logs these as warnings rather than refusing the config.
+    #>
+    param([Parameter(Mandatory)]$Config)
+    $targets = @(Get-VATargets $Config -IncludeDisabled | ForEach-Object { "$($_.name)" })
+    $i = 0
+    foreach ($d in @(Get-VADigests $Config -IncludeDisabled)) {
+        $i++
+        $n = "$(Get-VAProp $d 'name' '')"
+        $label = if ($n) { "digest '$n'" } else { "digests[$i]" }
         foreach ($t in @(Get-VAProp $d 'targets' @('*'))) {
-            if ($t -ne '*' -and $targets -notcontains $t) { $errors.Add("${label}: target '$t' is not configured.") }
+            if ($t -ne '*' -and $targets -notcontains $t) { "${label}: target '$t' is not configured." }
         }
     }
-    return $errors
 }
 
 # ---- Migration from pre-release settings ----------------------------------------------------------------

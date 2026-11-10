@@ -30,6 +30,7 @@ Import-Module (Join-Path $PSScriptRoot 'src\VeeamAware.psm1') -Force
 $cfgArgs = @{}; if ($ConfigPath) { $cfgArgs.Path = $ConfigPath }
 $config = Get-VAConfig @cfgArgs
 Initialize-VALog -Name 'session' -Level $config.logging.level -RetentionDays $config.logging.retentionDays
+Write-VAConfigWarnings
 Write-VALog "Worker started: job=$JobId session=$SessionId whatIf=$WhatIf"
 
 try {
@@ -40,6 +41,12 @@ try {
     if ($SessionId) {
         try { $session = Get-VASession $SessionId }
         catch { Write-VALog "Session $SessionId not found ($($_.Exception.Message)); falling back to job lookup" -Level Warning }
+        # The hook passes both IDs; a session of another job means the ID was wrong, so ask the job instead.
+        $sj = "$(Get-VAProp $session 'jobId' '')"
+        if ($session -and $JobId -and $sj -and $sj -ne $JobId) {
+            Write-VALog "Session $SessionId belongs to job $sj, not $JobId; falling back to job lookup" -Level Warning
+            $session = $null
+        }
     }
     if (-not $session -and $JobId) {
         # The hook can start before VBR has the session listed as the latest; give it a moment.
@@ -77,9 +84,9 @@ try {
     }
 
     try {
-        $tasks = Test-VARestOptional -What 'task sessions' { Get-VATaskSessions $SessionId }
-        $log = Test-VARestOptional -What 'session log' { Get-VASessionLog $SessionId }
-        $summary = Get-VASessionSummary -Session $session -TaskSessions @($tasks) -Log @($log)
+        $tasks = @(Test-VARestOptional -What 'task sessions' { Get-VATaskSessions $SessionId } | Where-Object { $_ })
+        $log = @(Test-VARestOptional -What 'session log' { Get-VASessionLog $SessionId } | Where-Object { $_ })
+        $summary = Get-VASessionSummary -Session $session -TaskSessions $tasks -Log $log
         # Job history / repository space for the report; skipped when it only goes to the digest.
         if (-not ($deferred -and -not $Force)) { $summary = Add-VASessionContext -Summary $summary }
         $evt = New-VASessionEvent -Config $config -Summary $summary -Deferred:($deferred -and -not $Force)
@@ -87,8 +94,18 @@ try {
         Write-VALog "Session $SessionId delivered to $sent target(s)$(if ($deferred -and -not $Force) { ' (routed to the digest)' })"
     }
     catch {
-        if (-not $WhatIf) { Remove-VANotifiedSession $SessionId }
-        throw
+        $err = $_
+        # Release the claim so the watcher sends it instead; a failed release would leave it unsent for good.
+        if (-not $WhatIf) {
+            for ($i = 1; $i -le 3; $i++) {
+                try { Remove-VANotifiedSession $SessionId; break }
+                catch {
+                    if ($i -eq 3) { Write-VALog "Could not release session $SessionId for the watcher: $($_.Exception.Message)" -Level Error }
+                    else { Start-Sleep -Seconds 2 }
+                }
+            }
+        }
+        throw $err
     }
 
     # The watcher cannot report its own scheduled task not running; the hook still runs, so it checks.

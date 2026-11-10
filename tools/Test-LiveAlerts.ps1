@@ -32,40 +32,80 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot '..\src\VeeamAware.psm1') -Force
 
 $cfgPath = if ($ConfigPath) { $ConfigPath } else { Resolve-VAPath 'config\config.json' }
-$backup = "$cfgPath.before-live-test"
+# The settings the test changed and what they were, so -Stop puts back just those and keeps any other edit.
+$saved = "$cfgPath.live-test.json"
+$oldBackup = "$cfgPath.before-live-test"   # whole-file copy made by 0.1.2 and earlier
 $flag = Resolve-VAPath 'state\test-watcher-failure'
 
+function Get-RawSetting($Json, [string]$Path) {
+    $o = $Json
+    foreach ($p in $Path.Split('.')) {
+        if ($o -isnot [System.Management.Automation.PSCustomObject] -or -not $o.PSObject.Properties[$p]) { return @{ had = $false; value = $null } }
+        $o = $o.$p
+    }
+    @{ had = $true; value = $o }
+}
+
+function Remove-RawSetting($Json, [string]$Path) {
+    $parts = $Path.Split('.'); $o = $Json
+    foreach ($p in $parts[0..($parts.Count - 2)]) {
+        if ($o -isnot [System.Management.Automation.PSCustomObject] -or -not $o.PSObject.Properties[$p]) { return }
+        $o = $o.$p
+    }
+    if ($o -is [System.Management.Automation.PSCustomObject]) { $o.PSObject.Properties.Remove($parts[-1]) }
+}
+
 function Show-Status {
-    Write-Host "Config changes:   $(if (Test-Path -LiteralPath $backup) { 'yes (-Stop restores config.json)' } else { 'none' })"
+    $changed = (Test-Path -LiteralPath $saved) -or (Test-Path -LiteralPath $oldBackup)
+    Write-Host "Config changes:   $(if ($changed) { 'yes (-Stop puts the changed settings back)' } else { 'none' })"
     Write-Host "Watcher test:     $(if (Test-Path -LiteralPath $flag) { 'on (every watcher run fails)' } else { 'off' })"
 }
 
 if ($Stop) {
-    if (Test-Path -LiteralPath $backup) { Move-Item -LiteralPath $backup -Destination $cfgPath -Force; Write-Host 'Restored config.json.' }
+    if (Test-Path -LiteralPath $saved) {
+        $json = Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json
+        $orig = Get-Content -Raw -LiteralPath $saved | ConvertFrom-Json
+        foreach ($p in $orig.PSObject.Properties) {
+            if ($p.Value.had) { Set-VASetupValue $json $p.Name $p.Value.value } else { Remove-RawSetting $json $p.Name }
+        }
+        $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath -Encoding utf8NoBOM
+        Remove-Item -LiteralPath $saved -Force
+        Write-Host "Put back $(@($orig.PSObject.Properties).Count) setting(s) in config.json."
+    }
+    elseif (Test-Path -LiteralPath $oldBackup) { Move-Item -LiteralPath $oldBackup -Destination $cfgPath -Force; Write-Host 'Restored config.json.' }
     if (Test-Path -LiteralPath $flag) { Remove-Item -LiteralPath $flag -Force; Write-Host 'The watcher runs normally again; its next run sends "recovered" if the alert went out.' }
     Show-Status; return
 }
 if (-not $Stuck -and -not $Watcher) { Show-Status; return }
 
-# Both tests need the watcher and health alerts switched on; config.json is saved first and -Stop restores it.
+# Both tests need the watcher and health alerts switched on. Each setting's first value is kept for -Stop.
 if (-not (Test-Path -LiteralPath $cfgPath)) { throw "No config at $cfgPath. Run Install-VeeamAware.ps1 first." }
-if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $cfgPath -Destination $backup }
 $json = Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json
+$orig = [ordered]@{}
+if (Test-Path -LiteralPath $saved) { foreach ($p in (Get-Content -Raw -LiteralPath $saved | ConvertFrom-Json).PSObject.Properties) { $orig[$p.Name] = $p.Value } }
+$change = {
+    param([string]$Path, $Value)
+    if (-not $orig.Contains($Path)) { $orig[$Path] = Get-RawSetting $json $Path }
+    Set-VASetupValue $json $Path $Value
+}
 foreach ($k in 'watch.enabled', 'watch.health.enabled') {
-    if (-not (Get-VASetupValue $json $k $true)) { Set-VASetupValue $json $k $true; Write-Host "Turned on $k for the test." }
+    if (-not (Get-VASetupValue $json $k $true)) { & $change $k $true; Write-Host "Turned on $k for the test." }
 }
 if ($Watcher -and [int](Get-VASetupValue $json 'watch.health.watcher.failureAlertAfter' 3) -le 0) {
-    Set-VASetupValue $json 'watch.health.watcher.failureAlertAfter' 3; Write-Host 'Turned on watcher failure alerts (after 3 runs) for the test.'
+    & $change 'watch.health.watcher.failureAlertAfter' 3; Write-Host 'Turned on watcher failure alerts (after 3 runs) for the test.'
 }
+if ($Stuck) {
+    # A sessions.jobs rule's hours apply as given (minHours doesn't raise them), so only this job is affected.
+    & $change 'watch.health.sessions.enabled' $true
+    $rules = @(@(Get-VASetupValue $json 'watch.health.sessions.jobs' @()) | Where-Object { $_ -and "$(Get-VAProp $_ 'job' '')" -ne $Stuck })
+    & $change 'watch.health.sessions.jobs' @(@([pscustomobject]@{ job = $Stuck; hours = 0.05 }) + $rules)
+    $excl = @(Get-VASetupValue $json 'watch.health.sessions.excludeJobs' @())
+    if (@($excl | Where-Object { $Stuck -like $_ })) { & $change 'watch.health.sessions.excludeJobs' @($excl | Where-Object { $Stuck -notlike $_ }) }
+}
+$orig | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $saved -Encoding utf8NoBOM
 $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath -Encoding utf8NoBOM
 
 if ($Stuck) {
-    $json = Get-Content -Raw -LiteralPath $cfgPath | ConvertFrom-Json
-    Set-VASetupValue $json 'watch.health.sessions.enabled' $true
-    Set-VASetupValue $json 'watch.health.sessions.minHours' 0
-    Set-VASetupValue $json 'watch.health.sessions.jobs' @([pscustomobject]@{ job = $Stuck; hours = 0.05 })
-    Set-VASetupValue $json 'watch.health.sessions.excludeJobs' @()
-    $json | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $cfgPath -Encoding utf8NoBOM
     Write-Host "Stuck-job test on: '$Stuck' now counts as stuck after 3 minutes."
     Write-Host 'Start the job in VBR. The alert arrives on the first watcher run after 3 minutes (the watcher runs every few minutes).'
 }

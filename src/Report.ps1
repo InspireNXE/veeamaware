@@ -550,7 +550,7 @@ function New-VASessionReport {
         if ($s.Start -and $s.End) { New-VARangePart $s.Start $s.End } elseif ($s.Start) { New-VATimePart $s.Start 't' 'started ' }
         if ($s.Duration) { Format-VADuration $s.Duration }
         if ($recent.Count -gt 1) { New-VAHistoryPart $recent $stripText }
-        if ($problems.Count -and $s.Tasks.Count) { "$($problems.Count) of $($s.Tasks.Count) objects" }
+        if ($problems.Count -and $s.Tasks.Count) { "$($problems.Count) of $($s.Tasks.Count) object$(if ($s.Tasks.Count -ne 1) { 's' })" }
         if ($s.Canceled) { 'stopped by user' }
         if ($s.Retry) { 'retry' }
     )
@@ -577,7 +577,7 @@ function New-VASessionReport {
             }
         }
         if (-not $quotes.Count -and $s.Message) { $quotes.Add([ordered]@{ text = Limit-VAText ($s.Message -replace '\s+', ' ') 600 }) }
-        if ($withMsg.Count -gt 3) { $note = "…and $($withMsg.Count - 3) more object(s) with messages below" }
+        if ($withMsg.Count -gt 3) { $more = $withMsg.Count - 3; $note = "…and $more more object$(if ($more -ne 1) { 's' }) with a message" }
         # What to do, in the note like the other cards (malware, services): one line per kind of issue.
         $fixes = @($issues | ForEach-Object Fix | Select-Object -Unique)
         if ($fixes) { $note = (@($fixes) + @($note) | Where-Object { $_ }) -join ' ' }
@@ -817,10 +817,17 @@ function New-VADigestReport {
                         Group-Object { $_.T.Name } | ForEach-Object { @($_.Group | Sort-Object When)[-1].T })
                 $machinesBad = @($machines | Where-Object { $_.Result -notmatch '^Success' } | Sort-Object { if ($_.Result -match '^Fail') { 0 } else { 1 } }, Name)
             }
+            # A last run that failed before it created any machine rows ("unable to allocate resources") is the
+            # job's state, not the earlier machine rows; and "recovered" needs a last run that succeeded.
+            if ($machines.Count -and -not @($last.Tasks | Where-Object { $_ }).Count -and $last.Result -match '^(Fail|Warning)') { $machines = @(); $machinesBad = @() }
             $state = if ($machines.Count) {
-                if (@($machinesBad | Where-Object Result -match '^Fail')) { 'Failed' } elseif ($machinesBad) { 'Warning' } elseif ($bad) { 'Recovered' } else { 'Success' }
+                if (@($machinesBad | Where-Object Result -match '^Fail')) { 'Failed' } elseif ($machinesBad) { 'Warning' }
+                elseif ($bad -and $last.Result -match '^Success') { 'Recovered' } elseif ($bad) { 'Warning' } else { 'Success' }
             }
-            else { if ($last.Result -match '^Fail') { 'Failed' } elseif ($last.Result -match '^Warning') { 'Warning' } elseif ($bad) { 'Recovered' } else { 'Success' } }
+            else {
+                if ($last.Result -match '^Fail') { 'Failed' } elseif ($last.Result -match '^Warning') { 'Warning' }
+                elseif ($bad -and $last.Result -match '^Success') { 'Recovered' } elseif ($bad) { 'Warning' } else { 'Success' }
+            }
             $known = if ($hist.ContainsKey($g.Name)) { @($hist[$g.Name].Values | Sort-Object End -Descending) } else { @() }
             $streak = 0
             foreach ($k in $known) { if ($k.Result -match '^Fail') { $streak++ } else { break } }
@@ -840,11 +847,14 @@ function New-VADigestReport {
         $m = $j.Machines.Count
         $parts = switch ($j.State) {
             'Failed' {
-                if ($m) { "$($j.MachinesBad.Count) of $m machine$(if ($m -ne 1) { 's' }) failing" }
+                if ($m) { "$(@($j.MachinesBad | Where-Object Result -match '^Fail').Count) of $m machine$(if ($m -ne 1) { 's' }) failing" }
                 elseif ($j.Streak -ge 2) { "failed $($j.Streak) runs in a row" } else { 'failed' }
                 if ($j.LastOk) { New-VATimePart $j.LastOk 'R' 'last success ' } else { "no success in $HistoryDays days" }
             }
-            'Warning' { if ($m) { "$($j.MachinesBad.Count) of $m machine$(if ($m -ne 1) { 's' }) with warnings" } else { 'warning on the last run' } }
+            'Warning' {
+                if ($m) { "$($j.MachinesBad.Count) of $m machine$(if ($m -ne 1) { 's' }) with warnings" }
+                elseif ($j.Last.Result -match '^Warning') { 'warning on the last run' } else { 'last run ended without a result' }
+            }
             'Recovered' { "$($j.Bad.Count) of $($j.Runs.Count) run$(if ($j.Runs.Count -ne 1) { 's' }) had issues, now recovered" }
         }
         $text = if ($j.MachinesBad) { & $machineText $j.MachinesBad }

@@ -144,7 +144,47 @@ It 'rejects a bad webhook and remote server with skipCertificateCheck' {
     $errs = @(Test-VAConfig $c)
     Assert ($errs.Count -eq 2) "got $($errs.Count) errors: $($errs -join '; ')"
 }
-It 'example config is valid' { Get-VAConfig -Path (Join-Path $root 'config\config.example.json') | Out-Null }
+It 'example config is valid apart from its placeholder URLs' {
+    Get-VAConfig -Path (Join-Path $root 'config\config.example.json') -AllowNoTargets | Out-Null
+    $w = @(Get-VAConfigWarnings)
+    Assert ($w.Count -gt 0) 'placeholders not flagged'
+    Assert (-not @($w | Where-Object { $_ -notlike '*placeholder*' }).Count) ($w -join '; ')
+}
+It 'a broken target is set aside instead of stopping everything' {
+    $p = Join-Path $tmp 'broken-target.json'
+    @'
+{"discord":{"webhookUrl":"https://discord.com/api/webhooks/1/a-b"},
+ "targets":[{"type":"webhook","name":"hook","url":"http://hooks.corp.example/x","tokenFile":"secrets\\none.json"},
+            {"type":"nosuchtype","name":"odd"},
+            {"type":"teams","name":"teams","url":"https://example.webhook.office.com/x","enabled":false}],
+ "digests":[{"name":"daily","targets":["discord","teams","gone"]}]}
+'@ | Set-Content $p
+    $c = Get-VAConfig -Path $p
+    Assert-Eq (@(Get-VATargets $c | ForEach-Object name) -join ',') 'discord'
+    $w = @(Get-VAConfigWarnings)
+    foreach ($want in "Target 'hook': url must use https://", "Target 'odd': unknown type", "target 'gone' is not configured") {
+        Assert (@($w | Where-Object { $_ -like "*$want*" }).Count -eq 1) "missing warning '$want' in: $($w -join '; ')"
+    }
+    Assert (-not @($w | Where-Object { $_ -like "*target 'teams'*" }).Count) 'a disabled target named by a digest is fine'
+    Assert-Eq (@(Resolve-VADigestTargets -Config $c -Digest @($c.digests)[0]) -join ',') 'discord'
+}
+It 'nothing usable left is still an error, with the reasons' {
+    $p = Join-Path $tmp 'no-target.json'
+    '{"targets":[{"type":"nosuchtype","name":"odd"}]}' | Set-Content $p
+    $msg = try { Get-VAConfig -Path $p | Out-Null; '' } catch { $_.Exception.Message }
+    Assert ($msg -like '*No notification target*' -and $msg -like '*unknown type*') $msg
+}
+It 'values that cannot work fall back to the default' {
+    $p = Join-Path $tmp 'bad-values.json'
+    '{"discord":{"webhookUrl":"https://discord.com/api/webhooks/1/a-b"},"logging":{"level":"Verbose"},"watch":{"intervalMinutes":"often"},"notifications":{"sessionWaitMinutes":"20"}}' | Set-Content $p
+    $c = Get-VAConfig -Path $p
+    Assert-Eq $c.logging.level 'Info'; Assert-Eq $c.watch.intervalMinutes 5; Assert-Eq $c.notifications.sessionWaitMinutes '20'
+    Assert-Eq @(Get-VAConfigWarnings).Count 2
+}
+It 'the top-level discord block can be switched off' {
+    $c = New-MockConfig; $c.discord['enabled'] = $false
+    Assert (-not @(Get-VATargets $c | Where-Object name -eq 'discord').Count) 'disabled block still sends'
+}
 It 'only real mention strings are used' { Assert-Eq (Get-VAMentionContent $config 'Failure') '<@111111111111111111>' }
 It 'routing rules add their own mentions' {
     $c = New-MockConfig
@@ -431,6 +471,38 @@ It 'digest with nothing to report' {
     $e = New-VADigestEmbeds -Config $config -From ([datetimeoffset]::UtcNow.AddHours(-24)) -To ([datetimeoffset]::UtcNow)
     Assert-DiscordLimits $e | Out-Null
 }
+It 'digest: an agent job whose last run failed before any machine ran is failed, not recovered' {
+    $to = [datetimeoffset](Get-Date).Date.AddHours(12)
+    $good = New-MockSession -Name 'Laptops' -Type 'AgentPolicy' -Result 'Success' -MinutesAgo 300 -Now $to; $good.id = 'a1'
+    $bad = New-MockSession -Name 'Laptops' -Type 'AgentPolicy' -Result 'Failed' -MinutesAgo 30 -Now $to; $bad.id = 'a2'
+    $agents = @(
+        (Get-VASessionSummary -Session $good -TaskSessions @((New-MockTask 'LT-1' 'Success' 5), (New-MockTask 'LT-2' 'Success' 5)))
+        (Get-VASessionSummary -Session $bad -TaskSessions @())
+    )
+    $r = New-VADigestReport -Config $config -From $to.AddDays(-1) -To $to -AgentSummaries $agents
+    Assert-Eq $r.status 'failed'
+    Assert ((Format-VAParts $r.quotes[0].parts) -notmatch 'recovered') "parts: $(Format-VAParts $r.quotes[0].parts)"
+}
+It 'digest: many failures still fit Teams and say how many were left out on Discord' {
+    $to = [datetimeoffset](Get-Date).Date.AddHours(12)
+    $other = @(1..60 | ForEach-Object { $s = New-MockSession -Name ("Job {0:d2} with a fairly long name" -f $_) -Result 'Failed' -MinutesAgo 30 -Now $to
+            $s.result.message = 'Unable to allocate processing resources. Error: repository is unavailable, the share cannot be reached ' * 3; $s })
+    $healthy = @(1..60 | ForEach-Object { New-MockSession -Name ("Healthy job {0:d2}" -f $_) -Result 'Success' -MinutesAgo 60 -Now $to })
+    $r = New-VADigestReport -Config $config -From $to.AddDays(-1) -To $to -OtherSessions @($other + $healthy)
+    $json = New-VATeamsPayload -Report $r
+    Assert ([Text.Encoding]::UTF8.GetByteCount($json) -le 26000) "Teams payload is $([Text.Encoding]::UTF8.GetByteCount($json)) bytes"
+    Assert ($json -match 'and \d+ more') 'Teams does not say how many quotes were left out'
+    $e = ConvertTo-VADiscordEmbeds $r
+    Assert-DiscordLimits $e | Out-Null
+    Assert ($e[0].description -match '…and \d+ more') 'Discord quotes cut without a count'
+}
+It 'Discord tables say how many lines were left out' {
+    $lines = @(1..200 | ForEach-Object { "row $_ " + ('x' * 20) })
+    $f = @(New-VACodeFields -Name 'Jobs' -Lines $lines -Ansi $false)
+    Assert-Eq $f.Count 3
+    Assert ($f[2].value -match 'and \d+ more lines not shown') $f[2].value
+    foreach ($x in $f) { Assert ($x.value.Length -le 1024) "field is $($x.value.Length) chars" }
+}
 
 Write-Host 'REST client'
 It 'follows pagination' {
@@ -550,6 +622,10 @@ It 'webhook secrets need https, except on the local network' {
     }
     $plain = @(& $v ([ordered]@{ type = 'webhook'; name = 'x'; url = 'http://hooks.example.com/in' }) $null)
     Assert (-not @($plain | Where-Object { $_ -match 'https' }).Count) 'http without secrets is allowed'
+    $opt = @(& $v ([ordered]@{ type = 'webhook'; name = 'x'; url = 'http://hooks.corp.example/in'; tokenFile = 'secrets\none.json'; allowHttp = $true }) $null)
+    Assert (-not @($opt | Where-Object { $_ -match 'https' }).Count) 'allowHttp lets it through'
+    foreach ($u in 'http://[::1]/x', 'http://[fd12:3456::5]/x', 'http://[fe80::1]/x') { Assert (Test-VALocalUrl $u) "$u is local" }
+    foreach ($u in 'http://[2001:db8::1]/x', 'http://192.0.2.10/x', 'http://hooks.corp.example/x') { Assert (-not (Test-VALocalUrl $u)) "$u is not local" }
 }
 It 'one failing target does not block the others' {
     & (Get-Module VeeamAware) {
@@ -1105,6 +1181,14 @@ It 'stuck sessions: usual run time, minimum, no history, exclusions' {
     $r = Update-VAStuckSessions $stuckCfg $late (New-VAHealthState) $t0 -TypicalDuration $typ
     Assert-Eq $r.Events.Count 1
 }
+It 'stuck sessions: a per-job limit applies as given, below minHours too' {
+    $cfg = (New-MockConfig).watch.health.sessions
+    $s = New-RunSession 'quick' 0.1
+    $cfg.jobs = @([ordered]@{ job = $s.name; hours = 0.05 })
+    Assert-Eq (Update-VAStuckSessions $cfg @($s) (New-VAHealthState) $t0).Events.Count 1
+    $other = New-RunSession 'other' 0.1
+    Assert-Eq (Update-VAStuckSessions $cfg @($other) (New-VAHealthState) $t0).Events.Count 0
+}
 It 'stuck sessions: no progress for noProgressMinutes' {
     $h = New-VAHealthState
     $s = New-RunSession 'stall' 0.5 -Pct 55
@@ -1211,6 +1295,20 @@ It 'masks webhook secrets in errors' {
     Assert-Eq (Format-VASafeUrl 'https://prod-1.westus.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke?api-version=1&sig=SECRET') 'https://prod-1.westus.logic.azure.com:443/…'
     Assert-Eq (Format-VASafeUrl 'https://localhost:9419/api/v1/sessions?limit=1') 'https://localhost:9419/api/v1/sessions'
     Assert-Eq (Hide-VAUrlSecret 'POST https://hooks.example/x/TOKEN failed' 'https://hooks.example/x/TOKEN') 'POST https://hooks.example/… failed'
+    Assert-Eq (Format-VASafeUrl 'https://user:12345@hooks.example/x/TOKEN') 'https://hooks.example/…'
+    Assert-Eq (Format-VASafeUrl 'http://[2001:db8::1]:8080/x/TOKEN') 'http://[2001:db8::1]:8080/…'
+    Assert-Eq (Format-VASafeUrl 'https://[::1]:9419/api/v1/x') 'https://[::1]:9419/api/v1/x'
+}
+It 'sample and preview cards are marked and page nobody' {
+    $evt = New-VAWatcherAlertEvent -Failures 3 -Since '2026-11-06T10:00:00Z' -LastError 'x' -LastGood '2026-11-06T09:55:00Z' -Now ([datetimeoffset]'2026-11-06T10:15:00Z')
+    $evt.mention = 'Failure'; $evt['mentionExtra'] = @('<@&222222222222222222>')
+    $fp = $evt.fingerprint
+    $evt = Set-VASampleEvent $evt -Label Preview
+    Assert ($evt.report.title.StartsWith('[Preview] ')) "card title: $($evt.report.title)"
+    Assert ($evt.title.StartsWith('[Preview] ')) 'event title'
+    Assert ($null -eq $evt.mention -and -not $evt.Contains('mentionExtra')) 'mentions kept'
+    Assert-Eq $evt.fingerprint "sample:$fp"
+    Assert ((ConvertTo-VADiscordEmbeds $evt.report)[0].title.Contains('[Preview]')) 'not on the Discord card'
 }
 It 'analyzer all clear has a card' {
     $e = New-VAAnalyzerAlertEvent -NewViolations @() -AllViolations @() -LastRun ([pscustomobject]@{ endTime = '2026-11-06T10:00:00Z' })

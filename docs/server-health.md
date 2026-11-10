@@ -45,7 +45,7 @@ This covers services, the watcher and repositories. Settings under `watch.flappi
 
 - A session is stuck when it has run 3× longer than the job usually takes (`usualFactor`), or its progress hasn't moved for 4 hours (`noProgressMinutes`).
 - Never before 2 hours (`minHours`), and 12 hours for a job with no history (`hours`).
-- Per-job limits: `jobs`, e.g. `[{ "job": "File server*", "hours": 24 }]`. Skip jobs with `excludeJobs`.
+- Per-job limits: `jobs`, e.g. `[{ "job": "File server*", "hours": 24 }]`. These apply as given, even under `minHours`. Skip jobs with `excludeJobs`.
 - Backup copy and idle sessions are skipped, since they stay open by design.
 - The alert shares the job's fingerprint, so the job's own report resolves it.
 
@@ -82,12 +82,12 @@ C:\VeeamAware\Set-VeeamAwareMaintenance.ps1 -Off
 C:\VeeamAware\Set-VeeamAwareMaintenance.ps1          # show the current state
 ```
 
-To see every health card without waiting for a real outage, run `tools\Send-HealthPreview.ps1`. It posts samples titled `[Preview]` and changes nothing.
+To see every health card without waiting for a real outage, run `tools\Send-HealthPreview.ps1`. It posts samples titled `[Preview]` that mention nobody, and changes nothing.
 
 To try the stuck-job and watcher alerts for real, end to end:
 
 ```powershell
 pwsh -File C:\VeeamAware\tools\Test-LiveAlerts.ps1 -Stuck 'Some Job'   # that job counts as stuck after 3 minutes; start it in VBR
 pwsh -File C:\VeeamAware\tools\Test-LiveAlerts.ps1 -Watcher            # every watcher run fails until -Stop
-pwsh -File C:\VeeamAware\tools\Test-LiveAlerts.ps1 -Stop               # put everything back
+pwsh -File C:\VeeamAware\tools\Test-LiveAlerts.ps1 -Stop               # put back the settings the test changed (your other edits stay)
 ```

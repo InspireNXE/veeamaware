@@ -25,11 +25,13 @@ Import-Module (Join-Path $PSScriptRoot 'src\VeeamAware.psm1') -Force
 $cfgArgs = @{}; if ($ConfigPath) { $cfgArgs.Path = $ConfigPath }
 $config = Get-VAConfig @cfgArgs
 Initialize-VALog -Name 'watch' -Level $config.logging.level -RetentionDays $config.logging.retentionDays
+Write-VAConfigWarnings
 $w = $config.watch
 if (-not $w.enabled) { Write-VALog 'Watcher disabled in config.'; return }
 
 $now = [datetimeoffset]::UtcNow
-$state = Read-VAState
+try { $state = Read-VAState }
+catch { Write-VALog "Watcher failed: $($_.Exception.Message)" -Level Error; exit 1 }
 $firstRun = -not $state.lastWatchUtc
 # Sessions are read from where the last successful read left off, with 15 minutes of overlap: a post-job worker
 # may hold a claim for a few minutes while it retries a failing target, then release it for the watcher to pick
@@ -115,9 +117,12 @@ try {
 
     # ---- Sessions no hook reported (and, from the same list, sessions that appear stuck) ----------------
     $wantStuck = $hs.enabled -and $hs.sessions.enabled
-    $sessions = $null
-    if ($w.missedSessions -or $wantStuck) { $sessions = Test-VARestOptional -What 'recent sessions' { Get-VASessions -EndedAfter $since } }
-    if ($wantStuck -and $null -ne $sessions) {
+    # An empty list comes back as $null just like a failed read, so whether the read worked is tracked apart.
+    $sessions = @(); $listRead = @{ Ok = $false }
+    if ($w.missedSessions -or $wantStuck) {
+        $sessions = @(Test-VARestOptional -What 'recent sessions' { $list = @(Get-VASessions -EndedAfter $since); $listRead.Ok = $true; $list } | Where-Object { $_ })
+    }
+    if ($wantStuck -and $listRead.Ok) {
         $typical = { param($s) if ("$($s.jobId)") { Get-VATypicalDuration -JobId "$($s.jobId)" } }
         $r = Update-VAStuckSessions -Settings $hs.sessions -Sessions @($sessions | Where-Object { Test-VAReportableSession $_ }) `
             -Health $health -Now $now -Quiet:$quiet.Quiet -TypicalDuration $typical -Timing (Get-VAHealthTiming $hs 'sessions')
@@ -137,9 +142,9 @@ try {
             if ($WhatIf) { if (Test-VASessionNotified $id) { continue } }
             elseif (-not (Add-VANotifiedSession $id)) { continue }   # the post-job worker already sent it
             try {
-                $tasks = Test-VARestOptional -What 'task sessions' { Get-VATaskSessions $id }
-                $log = Test-VARestOptional -What 'session log' { Get-VASessionLog $id }
-                $summary = Add-VASessionContext -Summary (Get-VASessionSummary -Session $s -TaskSessions @($tasks) -Log @($log))
+                $tasks = @(Test-VARestOptional -What 'task sessions' { Get-VATaskSessions $id } | Where-Object { $_ })
+                $log = @(Test-VARestOptional -What 'session log' { Get-VASessionLog $id } | Where-Object { $_ })
+                $summary = Add-VASessionContext -Summary (Get-VASessionSummary -Session $s -TaskSessions $tasks -Log $log)
                 Send-WatchEvent (New-VASessionEvent -Config $config -Summary $summary)
                 Write-VALog "Session $id ($($s.name): $($summary.Result)) sent by the watcher (rule '$($route.Rule)')"
             }
@@ -250,7 +255,7 @@ try {
         if ($hs.enabled) { Save-VAHealthState $health }
         # The session window only moves on once the session list was actually read, so a failed read is
         # covered by the next run instead of being skipped.
-        $sessionsRead = $null -ne $sessions -or -not ($w.missedSessions -or $wantStuck)
+        $sessionsRead = $listRead.Ok -or -not ($w.missedSessions -or $wantStuck)
         Update-VAState { param($s) $s.lastWatchUtc = $now.ToString('o'); if ($sessionsRead) { $s.sessionsSeenUtc = $now.ToString('o') } } | Out-Null
         if (-not $sessionsRead) { Write-VALog 'Session list not read this run; the next run looks back further to cover it.' -Level Warning }
     }

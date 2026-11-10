@@ -134,6 +134,8 @@ C:\VeeamAware\Register-VeeamAwareJob.ps1 -Apply   # attach it to VM, copy and fi
 
 Agent jobs keep their scripts per job, so for those it prints the command to paste in. Agent policies can't run scripts at all; the scheduled task reports them.
 
+A job that already runs a post-job script of its own is left alone. With `-Overwrite` the hook replaces it, the old script is saved in `state\replaced-post-job-scripts.json`, and `-Remove` (or the uninstaller) puts it back.
+
 ### 3. Check it works
 
 You should already have a test message in each channel. To see every kind of card, with made-up data:

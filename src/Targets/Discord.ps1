@@ -255,6 +255,26 @@ function Format-VAHistoryTable {
 
 # ---- Report -> embeds ---------------------------------------------------------------------------------------
 
+function New-VACodeFields {
+    <#
+    Code-block fields for a table: a field holds 1024 characters including the fence, so rows spill into up to
+    two "(cont.)" fields. Past that, the last field ends with how many lines were left out.
+    #>
+    param([string]$Name, [string[]]$Lines, [bool]$Ansi, [int]$MaxFields = 3)
+    $chunks = Split-VALinesToChunks $Lines 1000   # returns its array whole (no @(): that would nest it)
+    $hidden = 0
+    if ($chunks.Count -gt $MaxFields) {
+        $chunks = Split-VALinesToChunks $Lines 960   # room for the "more" line
+        foreach ($c in ($chunks | Select-Object -Skip $MaxFields)) { $hidden += @($c -split "`n").Count }
+        $chunks = @($chunks | Select-Object -First $MaxFields)
+    }
+    for ($i = 0; $i -lt $chunks.Count; $i++) {
+        $rows = @($chunks[$i] -split "`n")
+        if ($hidden -and $i -eq $chunks.Count - 1) { $rows += Format-VAAnsi "…and $hidden more line$(if ($hidden -ne 1) { 's' }) not shown" 'gray' $Ansi }
+        New-VAField $(if ($i) { "$Name (cont.)" } else { $Name }) (Format-VACodeBlock $rows $Ansi)
+    }
+}
+
 function ConvertTo-VADiscordEmbeds {
     <#
     .SYNOPSIS
@@ -284,8 +304,17 @@ function ConvertTo-VADiscordEmbeds {
         })
     $desc = $head
     if ($quoteLines) {
-        $budget = $l.Description - $head.Length - "$gauge".Length - $note.Length - 4
-        $desc += "`n`n" + (Split-VALinesToChunks $quoteLines ([Math]::Max(200, $budget)))[0]
+        # As many quotes as fit, then a count of the rest (a bad night can have dozens).
+        $budget = [Math]::Max(200, $l.Description - $head.Length - "$gauge".Length - $note.Length - 4) - 40
+        $kept = [System.Collections.Generic.List[string]]::new(); $used = 0
+        foreach ($q in $quoteLines) {
+            $len = $q.Length + 1
+            if ($used + $len -gt $budget) { break }
+            $kept.Add($q); $used += $len
+        }
+        if (-not $kept.Count) { $kept.Add((Limit-VAText $quoteLines[0] $budget)) }
+        $rest = $quoteLines.Count - $kept.Count
+        $desc += "`n`n" + ($kept -join "`n") + $(if ($rest -gt 0) { "`n> -# …and $rest more" })
     }
     $desc += "$gauge$note"
 
@@ -300,11 +329,7 @@ function ConvertTo-VADiscordEmbeds {
             if ($trend) { $lines += Format-VAAnsi "     $trend" (Get-VATrendColor $sec['repository']) $Ansi }
         }
         if (-not $lines) { continue }
-        # A field holds 1024 characters including the fence; spill extra rows into continuation fields.
-        $chunks = Split-VALinesToChunks $lines 1000
-        for ($i = 0; $i -lt [Math]::Min($chunks.Count, 3); $i++) {
-            $fields += New-VAField $(if ($i) { "$($sec['title']) (cont.)" } else { $sec['title'] }) (Format-VACodeBlock ($chunks[$i] -split "`n") $Ansi)
-        }
+        $fields += @(New-VACodeFields -Name $sec['title'] -Lines $lines -Ansi $Ansi)
     }
 
     foreach ($sec in @($r.sections | Where-Object { $_['type'] -in 'history', 'repositories', 'text' })) {
@@ -326,10 +351,7 @@ function ConvertTo-VADiscordEmbeds {
         if (-not $lines) { continue }
         $name = "$($sec['icon']) $($sec['title'])".Trim()
         if ($sec['type'] -eq 'text') { $fields += New-VAField $name (($lines -join "`n") | ForEach-Object { Limit-VAText $_ 1024 }); continue }
-        $chunks = Split-VALinesToChunks $lines 1000
-        for ($i = 0; $i -lt [Math]::Min($chunks.Count, 3); $i++) {
-            $fields += New-VAField $(if ($i) { "$name (cont.)" } else { $name }) (Format-VACodeBlock ($chunks[$i] -split "`n") $Ansi)
-        }
+        $fields += @(New-VACodeFields -Name $name -Lines $lines -Ansi $Ansi)
     }
 
     $badge = if ($Badges) { "attachment://status-$($r.status).png" }
@@ -546,6 +568,7 @@ Register-VATargetType -Type discord -Description 'Discord channel webhook (embed
         if ("$(Get-VAProp $Target 'webhookUrl' '')" -notmatch '^https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+$') {
             'webhookUrl must be a Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>).'
         }
+        elseif (Test-VAPlaceholderUrl "$(Get-VAProp $Target 'webhookUrl' '')") { 'webhookUrl is still the example placeholder (replace-me); paste the real webhook URL.' }
         if ($Target.Contains('threadId') -and $Target.threadId -and "$($Target.threadId)" -notmatch '^\d+$') { 'threadId must be numeric.' }
     } `
     -Wants { param($Target, $Event) $null -ne $Event.report } `
