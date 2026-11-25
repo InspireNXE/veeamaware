@@ -19,7 +19,7 @@ For example, an agent backup that fails after a VBR upgrade because the agent on
 </tr>
 </table>
 
-> Version 0.1.0. It runs daily on a Community Edition server, but much hasn't been tried on other setups yet; see [Project status](#project-status).
+> Version 0.1.3. It runs daily on a Community Edition server, but much hasn't been tried on other setups yet; see [Project status](#project-status).
 
 VeeamAware is an independent community project. It isn't affiliated with, endorsed by or supported by Veeam Software. Veeam and Veeam Backup & Replication are trademarks of Veeam Software.
 
@@ -199,7 +199,7 @@ The digest tells you when a new release is out.
 C:\VeeamAware\Update-VeeamAware.ps1 -Check             # see what's available
 C:\VeeamAware\Update-VeeamAware.ps1                    # install the newest release
 C:\VeeamAware\Update-VeeamAware.ps1 -Channel preview   # switch to preview releases too
-C:\VeeamAware\Update-VeeamAware.ps1 -Tag v0.1.0        # install a specific release, e.g. to go back
+C:\VeeamAware\Update-VeeamAware.ps1 -Tag v0.1.3        # install a specific release, e.g. to go back
 ```
 
 Updates keep your settings, secrets, state, logs and plugins.
