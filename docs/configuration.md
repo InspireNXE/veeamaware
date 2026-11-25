@@ -19,7 +19,7 @@ Related: [Targets](targets.md) · [Server health](server-health.md)
 | `discord.ansiColors` | `true` | Coloured tables on Discord desktop and web. Mobile shows them plain. |
 | `notifications.objectDetail` | `all` | `all` / `problems` / `none`: the per-object table on job reports |
 | `watch.intervalMinutes` | `5` | Re-run `Install-VeeamAware.ps1` after changing it |
-| `watch.repositories.warnPercentFree` / `criticalPercentFree` | `15` / `5` | |
+| `watch.repositories.warnPercentFree` / `criticalPercentFree` | `15` / `5` | % free; the installer's Repository space menu sets both |
 | `watch.repositories.exclude` | `[]` | Repository names, wildcards allowed |
 | `watch.health.*` | | See [Server health](server-health.md) |
 | `vbr.dataSource` | `auto` | See [Data sources](#data-sources) |

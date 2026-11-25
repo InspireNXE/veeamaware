@@ -258,9 +258,12 @@ function Get-VASetupSummary {
         "'$($d.name)' $when at $(Get-VAProp $d 'schedule.at' '08:00')$(if ($to -notcontains '*' -and $targets.Count -gt 1) { " to $($to -join ', ')" })"
     }
     $agent = Get-VASetupAgentMode $Json
+    $r = Get-VASetupValue $Json 'watch.repositories'
+    $storage = if (-not (Get-VAProp $r 'enabled' $true)) { 'off' } else { "warn at $(Get-VAProp $r 'warnPercentFree' 15)% free, critical at $(Get-VAProp $r 'criticalPercentFree' 5)%" }
     [ordered]@{
         targets = @{ Label = 'Targets'; Value = $(if ($targets) { ($targets | ForEach-Object Name) -join ', ' } else { 'none' }) }
         health  = @{ Label = 'Health alerts'; Value = $health }
+        storage = @{ Label = 'Repository space'; Value = $storage }
         digest  = @{ Label = 'Digest'; Value = $digest }
         agents  = @{ Label = 'Agent jobs'; Value = $(if ($agent -and $script:VAAgentModes.Contains($agent)) { $script:VAAgentModes[$agent].Short } elseif ($agent) { 'custom routing rule' } else { 'every run right away' }) }
         watch   = @{ Label = 'Watcher'; Value = "every $(Format-VAMinutes ([int](Get-VASetupValue $Json 'watch.intervalMinutes' 5)))" }

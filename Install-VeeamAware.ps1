@@ -247,6 +247,20 @@ function Edit-Health {
     Set-VASetupValue $json 'watch.health.watcher.failureAlertAfter' $after
 }
 
+function Edit-Storage {
+    Write-VAHeading 'Repository space'
+    Write-VAHint 'Alerts when a backup repository runs low on free space, goes offline, or recovers. The levels are a percentage of each repository''s capacity and apply to every repository.'
+    Write-Host ''
+    $r = Get-VASetupValue $json 'watch.repositories'
+    $on = Read-YesNo 'Send repository alerts' ([bool](Get-VAProp $r 'enabled' $true))
+    Set-VASetupValue $json 'watch.repositories.enabled' $on
+    if (-not $on) { return }
+    $warn = Read-Number 'Warn when free space is at or below' ([int](Get-VAProp $r 'warnPercentFree' 15)) 1 99 '% free'
+    $crit = Read-Number 'Critical at or below' ([int][Math]::Min([double](Get-VAProp $r 'criticalPercentFree' 5), $warn)) 0 $warn "% free; at most $warn"
+    Set-VASetupValue $json 'watch.repositories.warnPercentFree' $warn
+    Set-VASetupValue $json 'watch.repositories.criticalPercentFree' $crit
+}
+
 function Edit-Digest {
     $d = Get-VASetupDigest $json
     Write-VAHeading "Digest '$($d.name)'"
@@ -360,12 +374,12 @@ function Edit-Hooks {
 if ($interactive) {
     $targetsBefore = (@(Get-VASetupTargets $json) | ForEach-Object { "$($_.Name)=$($_.Url)" }) -join ';'
     if ($new) {
-        Edit-Targets; Edit-Health; Edit-Digest; Edit-Agents
+        Edit-Targets; Edit-Health; Edit-Storage; Edit-Digest; Edit-Agents
         Write-Host ''
         Write-VAHint 'Watcher interval, data source and updates use their defaults. Run .\Install-VeeamAware.ps1 again to change any setting.'
     }
     else {
-        $edit = [ordered]@{ targets = { Edit-Targets }; health = { Edit-Health }; digest = { Edit-Digest }; agents = { Edit-Agents }
+        $edit = [ordered]@{ targets = { Edit-Targets }; health = { Edit-Health }; storage = { Edit-Storage }; digest = { Edit-Digest }; agents = { Edit-Agents }
             watch = { Edit-Watch }; source = { Edit-Source }; updates = { Edit-Updates }; hooks = { Edit-Hooks } }
         while ($true) {
             $summary = Get-VASetupSummary $json
