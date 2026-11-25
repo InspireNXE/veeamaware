@@ -346,10 +346,12 @@ function Edit-Hooks {
         & $reg
         Write-Host ''
         Write-VAOption 'a' 'attach the hook to the pending jobs'
+        Write-VAOption 'o' 'attach it everywhere, replacing other post-job scripts (they are saved, and removing the hook restores them)'
         Write-VAOption 'r' 'remove it from every job'
         Write-VAOption 'n' 'leave as is'
-        $c = Read-Choice 'Choice' @('a', 'r', 'n') 'n'
+        $c = Read-Choice 'Choice' @('a', 'o', 'r', 'n') 'n'
         if ($c -eq 'a') { & $reg -Apply }
+        elseif ($c -eq 'o') { & $reg -Apply -Overwrite }
         elseif ($c -eq 'r') { & $reg -Remove -Apply }
     }
     catch { Write-VAWarn "Could not read the VBR jobs: $($_.Exception.Message)" }
