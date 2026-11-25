@@ -1,0 +1,37 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches the module version
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}   # through env, never pasted into the script
+        run: |
+          $tag = $env:TAG
+          $line = Select-String -Path ./src/VeeamAware.psm1 -Pattern "^\`$script:VAVersion = '([^']+)'" | Select-Object -First 1
+          if (-not $line) { throw 'VAVersion not found in src/VeeamAware.psm1' }
+          $version = $line.Matches[0].Groups[1].Value
+          if ($tag -ne "v$version") { throw "Tag $tag does not match `$script:VAVersion '$version'" }
+      - name: Offline test suite
+        shell: pwsh
+        run: pwsh -NoProfile -File ./tests/Run-Tests.ps1
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:TAG
+          $flags = @('--generate-notes', '--title', "VeeamAware $tag")
+          if ($tag -match '-') { $flags += '--prerelease' }   # v0.4.0-preview.1 -> preview channel only
+          gh release create $tag @flags

@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Preview</title>
+<!--
+  Template for tools\New-SampleCards.ps1, which fills in the cards and writes samples\preview.html.
+  Draws each card the way Discord (dark theme) and Teams (light theme) lay it out:
+    preview.html                      every card, both targets
+    preview.html?card=failure         one card
+    preview.html?card=failure&view=teams
+  Discord text and layout are approximated (gg sans isn't public; emoji are Twemoji like Discord's).
+  Teams cards are drawn by Microsoft's own Adaptive Cards renderer.
+-->
+<script src="https://cdn.jsdelivr.net/npm/adaptivecards@3.0.4/dist/adaptivecards.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@twemoji/api@15.1.0/dist/twemoji.min.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: #1e1f22; }
+  .stage { padding: 16px; display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  .label { width: 100%; color: #949ba4; font: 600 12px/1 "Segoe UI", sans-serif; text-transform: uppercase; letter-spacing: .04em; margin: 8px 0 -8px; }
+
+  /* Discord, dark theme */
+  .dc { background: #313338; color: #dbdee1; width: 640px; padding: 16px 16px 16px 16px; font-family: "gg sans", "Noto Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif; font-size: 16px; line-height: 1.375; }
+  .dc .msg { display: grid; grid-template-columns: 40px 1fr; column-gap: 16px; }
+  .dc .avatar { width: 40px; height: 40px; border-radius: 50%; background: #00b336; display: grid; place-items: center; color: #fff; font: 700 15px/1 "Segoe UI", sans-serif; }
+  .dc .who { display: flex; align-items: center; gap: 6px; }
+  .dc .name { color: #f2f3f5; font-weight: 600; font-size: 16px; }
+  .dc .tag { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; padding: 1px 4px; border-radius: 3px; line-height: 15px; }
+  .dc .when { color: #949ba4; font-size: 12px; margin-left: 2px; }
+  .dc .embed { margin-top: 4px; max-width: 520px; background: #2b2d31; border-left: 4px solid; border-radius: 4px; padding: 8px 16px 16px 12px;
+    display: grid; grid-template-columns: auto min-content; }
+  .dc .embed + .embed { margin-top: 4px; }
+  .dc .e-author { grid-column: 1; margin-top: 8px; color: #f2f3f5; font-size: 14px; font-weight: 600; }
+  .dc .e-title { grid-column: 1; margin-top: 8px; color: #f2f3f5; font-size: 16px; font-weight: 600; }
+  .dc .e-desc { grid-column: 1; margin-top: 8px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .dc .e-fields { grid-column: 1; margin-top: 8px; display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
+  .dc .e-field { font-size: 14px; min-width: 0; }
+  .dc .e-field .fn { color: #f2f3f5; font-weight: 600; margin-bottom: 2px; }
+  .dc .e-field .fv { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .dc .e-thumb { grid-row: 1 / 8; grid-column: 2; margin: 8px 0 0 16px; width: 80px; height: 80px; object-fit: contain; border-radius: 3px; justify-self: end; }
+  .dc .e-footer { grid-column: 1 / 3; margin-top: 8px; color: #dbdee1; font-size: 12px; font-weight: 500; }
+  .dc blockquote { margin: 0; padding: 0 8px 0 12px; border-left: 4px solid #4e5058; border-radius: 4px; }
+  .dc .sub { color: #949ba4; font-size: 12px; display: block; }
+  .dc code { font-family: Consolas, "Andale Mono WT", monospace; font-size: 85%; background: #1e1f22; border: 1px solid #1e1f22; border-radius: 4px; padding: 0 2px; }
+  .dc pre { margin: 4px 0 0; font-family: Consolas, "Andale Mono WT", monospace; font-size: 12px; line-height: 16px; background: #2b2d31; border: 1px solid #1e1f22; border-radius: 4px; padding: 7px; white-space: pre; overflow: hidden; color: #b5bac1; }
+  .dc .ts { background: rgba(255,255,255,.06); border-radius: 3px; padding: 0 2px; }
+  .dc img.emoji { width: 1.375em; height: 1.375em; vertical-align: -.3em; margin: 0 .05em; }
+  .dc .e-desc img.emoji, .dc .e-field img.emoji { width: 1.2em; height: 1.2em; vertical-align: -.25em; }
+  .a30 { color: #4f545c } .a31 { color: #dc322f } .a32 { color: #859900 } .a33 { color: #b58900 } .a34 { color: #268bd2 } .a35 { color: #d33682 } .a36 { color: #2aa198 } .a37 { color: #ffffff } .a1 { font-weight: 700 }
+
+  /* Teams, light theme */
+  .tm { background: #f5f5f5; width: 640px; padding: 16px; font-family: "Segoe UI", system-ui, sans-serif; }
+  .tm .post { background: #fff; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,.14), 0 0 2px rgba(0,0,0,.12); padding: 12px 16px 16px; }
+  .tm .who { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 14px; color: #242424; }
+  .tm .avatar { width: 32px; height: 32px; border-radius: 50%; background: #00b336; display: grid; place-items: center; color: #fff; font: 700 12px/1 "Segoe UI", sans-serif; }
+  .tm .name { font-weight: 600; }
+  .tm .via, .tm .when { color: #616161; font-size: 12px; }
+  .tm .card { border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; }
+  .tm .ac-textBlock p { margin: 0; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage"></div>
+<script>
+const CARDS = /*CARDS*/null;
+const ASSETS = /*ASSETS*/"";
+const q = new URLSearchParams(location.search);
+const only = q.get('card'), view = q.get('view');
+const NOW = new Date(/*NOW*/Date.now());   // the samples' own "now", so relative times read the same every rebuild
+
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const pad = n => String(n).padStart(2, '0');
+const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function rel(d) {
+  const s = Math.round((NOW - d) / 1000), a = Math.abs(s);
+  const [n, u] = a < 60 ? [a, 'second'] : a < 3600 ? [Math.round(a / 60), 'minute'] : a < 86400 ? [Math.round(a / 3600), 'hour'] : [Math.round(a / 86400), 'day'];
+  const t = n === 1 ? (u === 'hour' ? 'an hour' : u === 'day' ? 'a day' : `a ${u}`) : `${n} ${u}s`;
+  return s >= 0 ? `${t} ago` : `in ${t}`;
+}
+function stamp(sec, style) {
+  const d = new Date(sec * 1000);
+  const day = ymd(d) === ymd(NOW) ? 'Today' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  switch (style) {
+    case 'R': return rel(d);
+    case 't': return hhmm(d);
+    case 'd': return d.toLocaleDateString('en-GB');
+    default: return `${day} ${hhmm(d)}`;
+  }
+}
+
+// Discord inline markdown: escapes, `code`, **bold**, *italic*, __underline__, links, <t:..> timestamps.
+function inline(src) {
+  const keep = [];
+  let s = src.replace(/\\([\\*_`~|>#\-\[\]()])/g, (m, c) => { keep.push(esc(c)); return `\u0000${keep.length - 1}\u0000`; });
+  s = s.replace(/`([^`]+)`/g, (m, c) => { keep.push(`<code>${esc(c)}</code>`); return `\u0000${keep.length - 1}\u0000`; });
+  s = s.replace(/<t:(-?\d+)(?::([tTdDfFR]))?>/g, (m, n, st) => { keep.push(`<span class="ts">${esc(stamp(+n, st || 'f'))}</span>`); return `\u0000${keep.length - 1}\u0000`; });
+  s = esc(s);
+  s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a style="color:#00a8fc;text-decoration:none" href="$2">$1</a>')
+       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+       .replace(/__(.+?)__/g, '<u>$1</u>')
+       .replace(/(^|[^*])\*(?!\s)(.+?)\*/g, '$1<em>$2</em>');
+  return s.replace(/\u0000(\d+)\u0000/g, (m, i) => keep[+i]);
+}
+function ansi(text) {
+  let out = '', open = false;
+  for (const part of text.split(/(\u001b\[[\d;]*m)/)) {
+    const m = part.match(/^\u001b\[([\d;]*)m$/);
+    if (!m) { out += esc(part); continue; }
+    if (open) { out += '</span>'; open = false; }
+    const codes = m[1].split(';').filter(c => c && c !== '0' && c !== '2');
+    if (codes.length) { out += `<span class="${codes.map(c => 'a' + c).join(' ')}">`; open = true; }
+  }
+  return out + (open ? '</span>' : '');
+}
+function block(src) {
+  const out = [];
+  const lines = src.replace(/\r/g, '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const fence = l.match(/^```(\w*)\s*(.*)$/);
+    if (fence) {
+      const body = [];
+      if (fence[2] && !fence[2].endsWith('```')) body.push(fence[2]);
+      let j = i + 1;
+      for (; j < lines.length && !lines[j].startsWith('```'); j++) body.push(lines[j]);
+      i = j;
+      out.push(`<pre>${fence[1] === 'ansi' ? ansi(body.join('\n')) : esc(body.join('\n'))}</pre>`);
+      continue;
+    }
+    if (l.startsWith('> ') || l === '>') {
+      const body = [];
+      for (; i < lines.length && (lines[i].startsWith('> ') || lines[i] === '>'); i++) body.push(line(lines[i].slice(2)));
+      i--;
+      out.push(`<blockquote>${body.join('\n')}</blockquote>`);
+      continue;
+    }
+    out.push(line(l) + '\n');
+  }
+  return out.join('').replace(/\n$/, '').replace(/\n(<pre>|<blockquote>)/g, '$1').replace(/(<\/pre>|<\/blockquote>)\n/g, '$1');
+}
+function line(l) { return l.startsWith('-# ') ? `<span class="sub">${inline(l.slice(3))}</span>` : inline(l); }
+
+function fieldSpans(fields) {
+  // Discord: up to three inline fields share a row (4/12 each, 6/12 for a pair); others take the whole row.
+  const spans = []; let run = [];
+  const flush = () => { const w = run.length === 1 ? 12 : run.length === 2 ? 6 : 4; run.forEach(() => spans.push(w)); run = []; };
+  for (const f of fields) { if (f.inline) { run.push(f); if (run.length === 3) flush(); } else { flush(); spans.push(12); } }
+  flush();
+  return spans;
+}
+function discordEmbed(e) {
+  const color = '#' + (e.color ?? 0x95a5a6).toString(16).padStart(6, '0');
+  let h = `<div class="embed" style="border-color:${color}">`;
+  if (e.author) h += `<div class="e-author">${esc(e.author.name)}</div>`;
+  if (e.title) h += `<div class="e-title">${inline(e.title)}</div>`;
+  if (e.description) h += `<div class="e-desc">${block(e.description)}</div>`;
+  if (e.fields) {
+    const spans = fieldSpans(e.fields);
+    h += '<div class="e-fields">' + e.fields.map((f, i) =>
+      `<div class="e-field" style="grid-column:span ${spans[i]}"><div class="fn">${inline(f.name)}</div><div class="fv">${block(f.value)}</div></div>`).join('') + '</div>';
+  }
+  if (e.thumbnail) h += `<img class="e-thumb" src="${ASSETS}${e.thumbnail.url.replace('attachment://', '')}" alt="">`;
+  if (e.footer) h += `<div class="e-footer">${esc(e.footer.text)}${e.timestamp ? ' • ' + esc(stamp(Date.parse(e.timestamp) / 1000, 'f')) : ''}</div>`;
+  return h + '</div>';
+}
+function discord(embeds) {
+  const el = document.createElement('div');
+  el.className = 'dc';
+  el.innerHTML = `<div class="msg"><div class="avatar">VA</div><div><div class="who"><span class="name">VeeamAware</span><span class="tag">APP</span><span class="when">Today at ${hhmm(NOW)}</span></div>${embeds.map(discordEmbed).join('')}</div></div>`;
+  if (window.twemoji) twemoji.parse(el, { base: 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/', folder: 'svg', ext: '.svg' });
+  el.querySelectorAll('pre img.emoji').forEach(i => i.replaceWith(i.alt));   // Discord leaves emoji in code blocks alone
+  return el;
+}
+
+// Teams: Microsoft's Adaptive Cards renderer with Teams' light-theme colours.
+const tc = (def, sub) => ({ default: def, subtle: sub });
+const fg = { default: tc('#242424', '#616161'), dark: tc('#000000', '#66000000'), light: tc('#ffffff', '#33000000'), accent: tc('#5b5fc7', '#884b53bc'),
+  good: tc('#0e700e', '#99107c10'), warning: tc('#835b00', '#99835b00'), attention: tc('#c4314b', '#99c4314b') };
+const host = new AdaptiveCards.HostConfig({
+  fontFamily: '"Segoe UI", system-ui, sans-serif',
+  supportsInteractivity: false,
+  spacing: { small: 4, default: 8, medium: 16, large: 20, extraLarge: 24, padding: 16 },
+  fontSizes: { small: 12, default: 14, medium: 16, large: 20, extraLarge: 24 },
+  fontWeights: { lighter: 300, default: 400, bolder: 600 },
+  containerStyles: {
+    default: { backgroundColor: '#ffffff', foregroundColors: fg },
+    emphasis: { backgroundColor: '#f5f5f5', foregroundColors: fg },
+    accent: { backgroundColor: '#e8ebfa', foregroundColors: fg },
+    good: { backgroundColor: '#f1faf1', foregroundColors: fg },
+    attention: { backgroundColor: '#fdf3f4', foregroundColors: fg },
+    warning: { backgroundColor: '#fff9f5', foregroundColors: fg }
+  }
+});
+AdaptiveCards.AdaptiveCard.onProcessMarkdown = (text, result) => {
+  result.outputHtml = esc(text).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*(?!\s)(.+?)\*/g, '$1<em>$2</em>').replace(/\n/g, '<br>');
+  result.didProcess = true;
+};
+function teamsMacros(json) {
+  // Teams fills {{TIME(...)}} and {{DATE(...)}} in each reader's time zone, like this.
+  return json.replace(/\{\{TIME\(([^)]+)\)\}\}/g, (m, d) => hhmm(new Date(d)))
+             .replace(/\{\{DATE\(([^,)]+)(?:,\s*\w+)?\)\}\}/g, (m, d) => new Date(d).toLocaleDateString('en-GB'));
+}
+function teams(card) {
+  const el = document.createElement('div');
+  el.className = 'tm';
+  el.innerHTML = `<div class="post"><div class="who"><div class="avatar">VA</div><span class="name">VeeamAware</span><span class="via">via Workflows</span><span class="when">${hhmm(NOW)}</span></div><div class="card"></div></div>`;
+  const ac = new AdaptiveCards.AdaptiveCard();
+  ac.hostConfig = host;
+  ac.parse(JSON.parse(teamsMacros(JSON.stringify(card))));
+  el.querySelector('.card').appendChild(ac.render());
+  return el;
+}
+
+const stage = document.getElementById('stage');
+for (const [name, c] of Object.entries(CARDS || {})) {
+  if (only && only !== name) continue;
+  if (!only) { const l = document.createElement('div'); l.className = 'label'; l.textContent = name; stage.appendChild(l); }
+  // PowerShell can serialise a wrapped array as { value: [...], Count: n }.
+  const embeds = (Array.isArray(c.discord) ? c.discord : (c.discord.value || [c.discord])).flat();
+  if (view !== 'teams') stage.appendChild(discord(embeds));
+  if (view !== 'discord') stage.appendChild(teams(c.teams));
+}
+if (only) { stage.style.padding = '0'; document.body.style.background = view === 'teams' ? '#f5f5f5' : '#313338'; }
+document.body.dataset.ready = '1';
+</script>
+</body>
+</html>

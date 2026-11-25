@@ -1,0 +1,22 @@
+# Real configuration and any copy of it (backups, live-test saves). Only the example is tracked.
+config/*
+!config/config.example.json
+
+secrets/
+state/
+logs/
+tools/probe*-output.txt
+samples/
+
+# Your own target plugins
+plugins/targets/*
+!plugins/targets/README.md
+
+# Left behind when install.ps1 updates over a clone
+src.new/
+src.old/
+
+# Local tooling
+.claude/
+.vscode/
+*.zip
