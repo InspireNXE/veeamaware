@@ -842,6 +842,17 @@ It 'rejects bad URLs, duplicate names and duplicate URLs' {
     Assert ((Test-VASetupTarget $j teams discord 'https://x.example/y') -match 'already exists') 'dup name'
     Assert ((Test-VASetupTarget $j discord other 'https://discord.com/api/webhooks/1/aaa') -match 'already posts') 'dup url'
 }
+It 'stores the name a Discord target posts as, in the block and in the list' {
+    $j = & $exampleJson; $j.discord.webhookUrl = ''
+    Add-VASetupTarget -Json $j -Type discord -Url 'https://discord.com/api/webhooks/1/aaa' -Options @{ username = 'Backups' } | Out-Null
+    Add-VASetupTarget -Json $j -Type discord -Url 'https://discord.com/api/webhooks/2/bbb' -Options @{ username = 'On call' } | Out-Null
+    Assert-Eq $j.discord.username 'Backups'
+    Assert-Eq @($j.targets | Where-Object name -eq 'discord-2')[0].username 'On call'
+    Assert (-not (Test-VASetupDiscordName 'VeeamAware')) 'the default is allowed'
+    Assert ((Test-VASetupDiscordName 'My Discord bot') -match "doesn't allow") 'discord in the name'
+    Assert ((Test-VASetupDiscordName ('x' * 81)) -match '80') 'too long'
+    Assert ((Test-VASetupDiscordName ' ') -match 'empty') 'blank'
+}
 It 'removes targets from the block and from the list' {
     $j = & $exampleJson; $j.discord.webhookUrl = ''
     Add-VASetupTarget -Json $j -Type discord -Url 'https://discord.com/api/webhooks/1/aaa' | Out-Null

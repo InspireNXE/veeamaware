@@ -57,6 +57,14 @@ function Test-VASetupTarget {
     if ($dup.Count) { return "Target '$($dup[0].Name)' already posts to that URL." }
 }
 
+function Test-VASetupDiscordName {
+    <# Problems with the name a Discord target posts as (empty = fine). Discord refuses these itself. #>
+    param([string]$Name)
+    if (-not "$Name".Trim()) { return 'The name cannot be empty.' }
+    if ("$Name".Length -gt 80) { return 'Discord allows at most 80 characters.' }
+    if ("$Name" -match '(?i)discord|clyde') { return "Discord doesn't allow 'discord' or 'clyde' in the name." }
+}
+
 function Add-VASetupTarget {
     <# Adds a target to the parsed config. Extra options (tokenFile...) come in $Options. Returns its name. #>
     param([Parameter(Mandatory)]$Json, [Parameter(Mandatory)][string]$Type, [string]$Name, [Parameter(Mandatory)][string]$Url,
@@ -73,6 +81,7 @@ function Add-VASetupTarget {
         $d | Add-Member webhookUrl $Url -Force
         if ($MinSeverity -ne 'info') { $d | Add-Member minSeverity $MinSeverity -Force }
         elseif ($d.PSObject.Properties['minSeverity']) { $d.PSObject.Properties.Remove('minSeverity') }
+        foreach ($k in $Options.Keys) { $d | Add-Member $k $Options[$k] -Force }
         return $Name
     }
 

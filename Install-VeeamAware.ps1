@@ -137,17 +137,27 @@ function Read-NewTarget {
         Write-VAWarn $problem
     }
     $default = Get-VAFreeTargetName $json $type
+    Write-VAHint "The label is how rules and digests refer to this target. It isn't shown in the channel."
     while ($true) {
-        $name = Read-VAInput 'Name' $default; if (-not $name) { $name = $default }
+        $name = Read-VAInput 'Label' $default; if (-not $name) { $name = $default }
         $problem = Test-VASetupTarget -Json $json -Type $type -Name $name -Url $url
         if (-not $problem) { break }
         Write-VAWarn $problem
+    }
+    $options = @{}
+    if ($type -eq 'discord') {
+        while ($true) {
+            $as = Read-VAInput 'Posts as' 'VeeamAware' 'the name shown on messages'; if (-not $as) { $as = 'VeeamAware' }
+            $problem = Test-VASetupDiscordName $as
+            if (-not $problem) { break }
+            Write-VAWarn $problem
+        }
+        $options.username = $as
     }
     Write-Host ''
     $sevs = @((Get-VASetupSeverities).Keys)
     for ($i = 0; $i -lt $sevs.Count; $i++) { Write-VAOption ($i + 1) (Get-VASetupSeverities)[$sevs[$i]] }
     $sev = $sevs[[int](Read-Choice 'Send' @('1', '2', '3') '1') - 1]
-    $options = @{}
     if ($type -eq 'webhook') {
         foreach ($s in @(@{ Key = 'tokenFile'; Prompt = 'Bearer token'; File = "$name-token.json" }, @{ Key = 'signingSecretFile'; Prompt = 'HMAC signing secret'; File = "$name-hmac.json" })) {
             Write-Host "  $($s.Prompt)" -NoNewline; Write-Host ' (blank for none)' -NoNewline -ForegroundColor DarkGray; Write-Host ': ' -NoNewline

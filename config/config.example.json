@@ -22,7 +22,7 @@
       "enabled": false,
       "webhookUrl": "https://discord.com/api/webhooks/000000000000000000/replace-me",
       "minSeverity": "critical",
-      "username": "Backup alerts",
+      "username": "VeeamAware",
       "mentions": { "onFailure": [] }
     },
     {

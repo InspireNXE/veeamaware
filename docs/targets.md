@@ -34,7 +34,7 @@ Add as many targets as you like, of any type, each with a unique `name`. For exa
 ```json
 "targets": [
   { "type": "discord", "name": "oncall", "webhookUrl": "https://discord.com/api/webhooks/…",
-    "minSeverity": "critical", "username": "Backup alerts",
+    "minSeverity": "critical", "username": "VeeamAware",
     "mentions": { "onFailure": ["<@&123456789012345678>"] } }
 ]
 ```
@@ -46,6 +46,8 @@ To send a digest to just one channel, list its name in the digest's `targets` (s
 Create the webhook in Discord: channel settings → **Integrations** → **Webhooks** → **New Webhook**, then copy its URL.
 
 Every `discord.*` setting also works on a Discord entry in `targets`, so each channel can be set up separately: `threadId`, `username`, `avatarUrl`, `mentions`, `statusBadges`, `ansiColors`. See [Common settings](configuration.md#common-settings).
+
+Messages post as **VeeamAware** unless you set `username`. The installer asks for it as **Posts as** when you add a Discord target. That is separate from the target's **Label** (its `name`), which only rules and digests use and which never shows in the channel.
 
 ### Mentions
 
