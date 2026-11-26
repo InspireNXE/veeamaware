@@ -54,6 +54,43 @@ $saved = [ordered]@{}
 if (Test-Path -LiteralPath $savedPath) { foreach ($p in (Get-Content -Raw -LiteralPath $savedPath | ConvertFrom-Json).PSObject.Properties) { $saved[$p.Name] = $p.Value } }
 $savedChanged = $false
 
+function Set-VAPostScript($Job, $Opts, [bool]$Enabled, [string]$Command) {
+    <#
+    Sets a job's post-job script and checks that VBR kept it. Backup copy jobs (SimpleBackupCopyPolicy in v12+)
+    ignore Set-VBRJobOptions without an error, so they go through Set-VBRBackupCopyJob -ScriptOptions instead,
+    keeping their pre-job script and how often the scripts run.
+    #>
+    if ("$($Job.JobType)" -match 'BackupCopyPolicy') {
+        $bcj = @(Get-VBRBackupCopyJob -WarningAction SilentlyContinue | Where-Object { "$($_.Id)" -eq "$($Job.Id)" }) | Select-Object -First 1
+        if (-not $bcj) { $bcj = @(Get-VBRBackupCopyJob -WarningAction SilentlyContinue | Where-Object { $_.Name -eq $Job.Name }) | Select-Object -First 1 }
+        if (-not $bcj) { throw 'Get-VBRBackupCopyJob does not list this job.' }
+        $js = $Opts.JobScriptCommand
+        $p = @{ PostScriptEnabled = $Enabled; PreScriptEnabled = [bool]$js.PreScriptEnabled }
+        if ($Command) { $p.PostCommand = $Command }
+        if ("$($js.PreScriptCommandLine)") { $p.PreCommand = "$($js.PreScriptCommandLine)" }
+        $when = @{}
+        if ($js.Periodicity) { $when.Periodicity = "$($js.Periodicity)" }
+        if ($js.Frequency) { $when.Frequency = [uint32]$js.Frequency }
+        if (@($js.Days).Count) { $when.Day = @($js.Days) }
+        # Carry over how often the scripts run; if this VBR names those settings differently, use its defaults.
+        $so = try { New-VBRJobScriptOptions @p @when -ErrorAction Stop } catch { New-VBRJobScriptOptions @p -ErrorAction Stop }
+        Set-VBRBackupCopyJob -Job $bcj -ScriptOptions $so -ErrorAction Stop | Out-Null
+    }
+    else {
+        $Opts.JobScriptCommand.PostScriptEnabled = $Enabled
+        $Opts.JobScriptCommand.PostScriptCommandLine = $Command
+        Set-VBRJobOptions -Job $Job -Options $Opts | Out-Null
+    }
+    $fresh = @(Get-VBRJob -WarningAction SilentlyContinue | Where-Object { $_.Id -eq $Job.Id }) | Select-Object -First 1
+    $now = if ($fresh) { (Get-VBRJobOptions -Job $fresh).JobScriptCommand } else { $null }
+    # Detaching with nothing to put back only needs the script turned off; VBR may keep the old text.
+    $kept = if (-not $Enabled -and -not $Command) { -not [bool]$now.PostScriptEnabled }
+            else { "$($now.PostScriptCommandLine)" -eq $Command -and [bool]$now.PostScriptEnabled -eq $Enabled }
+    if ($now -and -not $kept) {
+        throw "VBR did not keep the change (post-job script is still '$($now.PostScriptCommandLine)')."
+    }
+}
+
 $rows = [System.Collections.Generic.List[object]]::new()
 
 # Get-VBRJob is deprecated for agent jobs in v13; those are handled by Get-VBRComputerBackupJob below.
@@ -70,15 +107,8 @@ foreach ($job in (Get-VBRJob -WarningAction SilentlyContinue | Where-Object { "$
             if ($ours) {
                 $status = if ($saved.Contains($id)) { 'to remove (puts back your script)' } else { 'to remove' }
                 if ($Apply) {
-                    if ($saved.Contains($id)) {
-                        $opts.JobScriptCommand.PostScriptEnabled = [bool]$saved[$id].enabled
-                        $opts.JobScriptCommand.PostScriptCommandLine = "$($saved[$id].command)"
-                    }
-                    else {
-                        $opts.JobScriptCommand.PostScriptEnabled = $false
-                        $opts.JobScriptCommand.PostScriptCommandLine = ''
-                    }
-                    Set-VBRJobOptions -Job $job -Options $opts | Out-Null
+                    if ($saved.Contains($id)) { Set-VAPostScript $job $opts ([bool]$saved[$id].enabled) "$($saved[$id].command)" }
+                    else { Set-VAPostScript $job $opts $false '' }
                     $status = if ($saved.Contains($id)) { 'removed (your script is back)' } else { 'removed' }
                     if ($saved.Contains($id)) { $saved.Remove($id); $savedChanged = $true }
                 }
@@ -90,10 +120,8 @@ foreach ($job in (Get-VBRJob -WarningAction SilentlyContinue | Where-Object { "$
             $status = if ($enabled) { 'has other script (use -Overwrite)' } else { 'has a disabled script (use -Overwrite)' }
         }
         elseif ($Apply) {
+            Set-VAPostScript $job $opts $true $cmd
             if ($current -and -not $ours) { $saved[$id] = [ordered]@{ job = $job.Name; enabled = $enabled; command = $current }; $savedChanged = $true }
-            $opts.JobScriptCommand.PostScriptEnabled = $true
-            $opts.JobScriptCommand.PostScriptCommandLine = $cmd
-            Set-VBRJobOptions -Job $job -Options $opts | Out-Null
             $status = if ($ours) { 'updated' } elseif ($current) { 'attached (your script saved)' } else { 'attached' }
         }
         elseif ($ours) { $status = 'pending (update the hook)' }
