@@ -19,7 +19,7 @@ For example, an agent backup that fails after a VBR upgrade because the agent on
 </tr>
 </table>
 
-> Version 0.1.5. It runs daily on a Community Edition server, but much hasn't been tried on other setups yet; see [Project status](#project-status).
+> Version 0.1.6. It runs daily on a Community Edition server, but much hasn't been tried on other setups yet; see [Project status](#project-status).
 
 VeeamAware is an independent community project. It isn't affiliated with, endorsed by or supported by Veeam Software. Veeam and Veeam Backup & Replication are trademarks of Veeam Software.
 
