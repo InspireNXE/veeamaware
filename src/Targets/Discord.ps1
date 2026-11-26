@@ -194,7 +194,7 @@ function Format-VARepositoryBar {
     if (-not $Info -or $null -eq $Info.PercentFree) { return $null }
     $used = [int][Math]::Round(10 * (100 - $Info.PercentFree) / 100)
     if ($used -ge 10 -and $Info.PercentFree -gt 0) { $used = 9 }   # some space left shows one red block, like Teams
-    $color = if ($Info.PercentFree -le 10) { 'red' } elseif ($Info.PercentFree -le 20) { 'yellow' } else { 'green' }
+    $color = @{ critical = 'red'; warning = 'yellow'; ok = 'green' }[(Get-VASpaceLevel $Info.PercentFree)]
     $bar = (Format-VAAnsi ('▰' * (10 - $used)) $color $Ansi) + (Format-VAAnsi ('▱' * $used) 'gray' $Ansi)
     # Kept under ~38 columns: the badge thumbnail narrows the embed and a wrapped bar is hard to read.
     "repo $bar $([Math]::Round($Info.PercentFree))% · $(Format-VASpaceRatio $Info)"

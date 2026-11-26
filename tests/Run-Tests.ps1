@@ -399,6 +399,20 @@ It 'repository levels and embed' {
     Assert-Eq (Get-VARepositoryLevel (Get-VARepositoryInfo (New-MockRepo 'c' 1000 30)) $rc) 'critical'
     Assert-Eq (Get-VARepositoryLevel (Get-VARepositoryInfo (New-MockRepo 'd' 1000 900 $false)) $rc) 'offline'
     Assert-Eq (Get-VARepositoryLevel (Get-VARepositoryInfo ([pscustomobject]@{ id = 'e'; name = 'S3' })) $rc) 'ok'
+    $own = [pscustomobject]@{ warnPercentFree = 30; criticalPercentFree = 12 }
+    Assert-Eq (Get-VASpaceLevel 25 $own) 'warning'
+    Assert-Eq (Get-VASpaceLevel 12 $own) 'critical'
+    Assert-Eq (Get-VASpaceLevel 31 $own) 'ok'
+    # Card bars colour at the configured levels, not fixed ones.
+    $mod = Get-Module VeeamAware
+    $saved = & $mod { Get-Variable -Name VAActiveConfig -Scope Script -ValueOnly -ErrorAction SilentlyContinue }
+    try {
+        & $mod { param($r) $script:VAActiveConfig = [pscustomobject]@{ watch = [pscustomobject]@{ repositories = $r } } } $own
+        $i = Get-VARepositoryInfo (New-MockRepo 'r' 1000 250)
+        Assert-Eq (& $mod { param($i) Get-VATeamsSpaceColor $i } $i) 'Warning'
+        Assert-Eq ((& $mod { param($i) Format-VARepositoryBar $i $true } $i) -match '\[2;33m') $true   # ANSI yellow
+    }
+    finally { & $mod { param($v) $script:VAActiveConfig = $v } $saved }
     $e = New-VARepositoryEmbed -Info (Get-VARepositoryInfo (New-MockRepo 'Primary ReFS' 20000 900)) -Level 'critical' -PreviousLevel 'warning'
     Assert-DiscordLimits @($e) | Out-Null
     $samples.Add(@{ Content = ''; Embeds = @($e) })

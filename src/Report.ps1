@@ -509,9 +509,23 @@ function Get-VARepositoryLevel {
     param([Parameter(Mandatory)]$Info, [Parameter(Mandatory)]$RepoConfig)
     if (-not $Info.Online) { return 'offline' }
     if ($null -eq $Info.PercentFree) { return 'ok' }   # object storage / unknown capacity
-    if ($Info.PercentFree -le [double]$RepoConfig.criticalPercentFree) { return 'critical' }
-    if ($Info.PercentFree -le [double]$RepoConfig.warnPercentFree) { return 'warning' }
-    return 'ok'
+    return Get-VASpaceLevel $Info.PercentFree $RepoConfig
+}
+
+function Get-VASpaceLevel {
+    <#
+    'ok', 'warning' or 'critical' for a free-space percentage, by watch.repositories' warnPercentFree and
+    criticalPercentFree. Without -RepoConfig it uses the loaded config, so card bars colour at the same levels
+    the alerts fire at (15 / 5, the defaults, when no config is loaded).
+    #>
+    param([double]$PercentFree, $RepoConfig)
+    if (-not $RepoConfig) {
+        $active = Get-Variable -Name VAActiveConfig -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        $RepoConfig = Get-VAProp $active 'watch.repositories'
+    }
+    $crit = [double](Get-VAProp $RepoConfig 'criticalPercentFree' 5)
+    $warn = [double](Get-VAProp $RepoConfig 'warnPercentFree' 15)
+    if ($PercentFree -le $crit) { 'critical' } elseif ($PercentFree -le $warn) { 'warning' } else { 'ok' }
 }
 
 # ---- Report builders ----------------------------------------------------------------------------------------

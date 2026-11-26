@@ -80,13 +80,13 @@ function New-VATeamsStrip {
 
 function Get-VATeamsSpaceColor {
     param($Info)
-    if ($Info.PercentFree -le 10) { 'Attention' } elseif ($Info.PercentFree -le 20) { 'Warning' } else { 'Good' }
+    @{ critical = 'Attention'; warning = 'Warning'; ok = 'Good' }[(Get-VASpaceLevel $Info.PercentFree)]
 }
 
 function New-VATeamsRepository {
     <#
     A repository as name + "58% free · 3.09/5.36 TB", a coloured bar (filled = free space, as on Discord;
-    green / amber at 20% / red at 10%) and the trend line. Returns card elements.
+    green, then amber and red at the warning and critical levels of watch.repositories) and the trend line. Returns card elements.
     #>
     param($Info, [string]$Spacing = 'Small', [int]$Blocks = 20)
     $name = "$(Get-VAProp $Info 'Name' 'Repository')"
