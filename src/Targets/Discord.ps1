@@ -141,8 +141,10 @@ function Get-VABadgeUrl {
 
 function Format-VAAnsi {
     <# Wraps text in a Discord ```ansi colour code (green/yellow/red/gray) when ANSI colouring is enabled. #>
-    param([string]$Text, [ValidateSet('green', 'yellow', 'red', 'gray', 'white')][string]$Color, [bool]$Enabled)
-    if (-not $Enabled -or -not $Text) { return $Text }
+    # 'gray' is Discord's ANSI 30, near-black on the dark theme: fine for bar outlines and rules, too dark
+    # for words. 'plain' leaves the code block's own (light) text colour.
+    param([string]$Text, [ValidateSet('green', 'yellow', 'red', 'gray', 'white', 'plain')][string]$Color, [bool]$Enabled)
+    if (-not $Enabled -or -not $Text -or $Color -eq 'plain') { return $Text }
     $code = @{ gray = 30; red = 31; green = 32; yellow = 33; white = 37 }[$Color]
     "$([char]27)[2;${code}m$Text$([char]27)[0m"
 }
@@ -184,7 +186,7 @@ function Format-VAObjectTable {
         if ($durW) { $line += '  ' + "$($t.duration)".PadLeft($durW) }
         $line.TrimEnd()
     }
-    if ($More -gt 0) { $lines = @($lines) + (Format-VAAnsi "  …and $More more" 'gray' $Ansi) }
+    if ($More -gt 0) { $lines = @($lines) + (Format-VAAnsi "  …and $More more" 'plain' $Ansi) }
     return @($lines)
 }
 
@@ -211,10 +213,10 @@ function Format-VARepositoryLine {
 }
 
 function Get-VATrendColor {
-    <# Red when the repository fills within 14 days, yellow within 30, else gray. #>
+    <# Red when the repository fills within 14 days, yellow within 30, else the code block's own text colour. #>
     param($Info)
     $d = if ($Info -and $Info.PSObject.Properties['Trend'] -and $Info.Trend) { $Info.Trend.DaysToFull }
-    if ($null -ne $d -and $d -le 14) { 'red' } elseif ($null -ne $d -and $d -le 30) { 'yellow' } else { 'gray' }
+    if ($null -ne $d -and $d -le 14) { 'red' } elseif ($null -ne $d -and $d -le 30) { 'yellow' } else { 'plain' }
 }
 
 function Format-VAHistoryTable {
@@ -239,7 +241,7 @@ function Format-VAHistoryTable {
     foreach ($r in $rows) {
         if ($group -and $r['group'] -ne $group) {
             $label = "─ $($r['group']) "
-            Format-VAAnsi ($label + '─' * [Math]::Max(3, $fixed + $w - $label.Length)) 'gray' $Ansi
+            (Format-VAAnsi '─ ' 'gray' $Ansi) + "$($r['group']) " + (Format-VAAnsi ('─' * [Math]::Max(3, $fixed + $w - $label.Length)) 'gray' $Ansi)
         }
         $group = $r['group']
         # Runs: count right-aligned, then "run"/"runs" left-aligned, so "1 run" and "2 runs" line up.
@@ -270,7 +272,7 @@ function New-VACodeFields {
     }
     for ($i = 0; $i -lt $chunks.Count; $i++) {
         $rows = @($chunks[$i] -split "`n")
-        if ($hidden -and $i -eq $chunks.Count - 1) { $rows += Format-VAAnsi "…and $hidden more line$(if ($hidden -ne 1) { 's' }) not shown" 'gray' $Ansi }
+        if ($hidden -and $i -eq $chunks.Count - 1) { $rows += Format-VAAnsi "…and $hidden more line$(if ($hidden -ne 1) { 's' }) not shown" 'plain' $Ansi }
         New-VAField $(if ($i) { "$Name (cont.)" } else { $Name }) (Format-VACodeBlock $rows $Ansi)
     }
 }

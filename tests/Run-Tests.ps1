@@ -340,6 +340,20 @@ It 'object rows fit beside the status badge' {
     $one = @(Format-VAObjectTable -Rows @($rows[0]) -Ansi $false)
     Assert-Eq $one[0] '✖ WS-EXAMPLE-01.corp.example  0 B'
 }
+It 'a success after warnings is not a recovery; after warnings and a failure it is, down since the failure' {
+    $now = [datetimeoffset]::UtcNow
+    $w = { param($id, $r, $hrs) [pscustomobject]@{ id = $id; result = $r; startTime = $now.AddHours(-$hrs - 1); endTime = $now.AddHours(-$hrs) } }
+    $s = Get-VASessionSummary -Session (New-MockSession -Name 'Copy' -Result 'Success') -TaskSessions @(New-MockTask 'mx' 'Success' 60)
+    Add-VAHistoryContext -Summary $s -History @((& $w 'w1' 'Warning' 24), (& $w 'w2' 'Warning' 48), (& $w 's' 'Success' 700)) | Out-Null
+    Assert (-not $s.Recovered) 'warnings alone are not down'
+    $e = New-VASessionEmbeds -Config $config -Summary $s
+    Assert ($e[0].description -notmatch 'RECOVERED|down') "description: $($e[0].description)"
+    $s = Get-VASessionSummary -Session (New-MockSession -Name 'Copy' -Result 'Success') -TaskSessions @(New-MockTask 'mx' 'Success' 60)
+    Add-VAHistoryContext -Summary $s -History @((& $w 'w1' 'Warning' 24), (& $w 'f' 'Failed' 48), (& $w 'w2' 'Warning' 72), (& $w 's' 'Success' 700)) | Out-Null
+    Assert $s.Recovered 'failure then success recovers'
+    Assert ([Math]::Abs($s.DownFor.TotalHours - 48) -lt 1) "down for $($s.DownFor)"
+}
+
 It 'compares with the usual run and reports recovery' {
     $now = [datetimeoffset]::UtcNow
     $ok = Get-VASessionSummary -Session (New-MockSession -Name 'Web' -Result 'Success') -TaskSessions @(New-MockTask 'web-01' 'Success' 600)

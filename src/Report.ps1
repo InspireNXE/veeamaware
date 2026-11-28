@@ -440,10 +440,12 @@ function Add-VAHistoryContext {
 
     $streak = if ($s.Result -match '^Fail') { 1 } else { 0 }
     $counting = $streak -gt 0
+    # Only failures make a job "down": runs that finished with warnings still produced restore points, so a
+    # success after warnings is an ordinary success, not a recovery.
     $firstBad = $null
     foreach ($h in $hist) {
         if ("$($h.result)" -match '^Success') { $s.LastSuccess = ConvertTo-VADate $h.endTime; break }
-        $firstBad = $h
+        if ("$($h.result)" -match '^Fail') { $firstBad = $h }
         if ($counting -and "$($h.result)" -match '^Fail') { $streak++ } else { $counting = $false }
     }
     $s.FailStreak = $streak
